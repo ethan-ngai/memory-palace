@@ -34,8 +34,8 @@
 
 ## Comments
 
-Comment to explain non-obvious intent or constraints, not to restate code. Explain "why", not "what".
+ALWAYS document all new functions, types, interfaces. Comment to explain non-obvious intent or constraints, not to restate code. Explain "why", not "what".
 
 ## Skills
 
-Use when user says "document", "JSDoc", "comments": Repo-local skill: `skills/jsdoc-best-practices/SKILL.md`
+Use when user says "document", "JSDoc", "comments" or when you are documenting: Repo-local skill: `skills/jsdoc-best-practices/SKILL.md`
