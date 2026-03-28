@@ -60,18 +60,46 @@ export type ConceptEmbedding = {
 };
 
 /**
- * Storage reference for a generated or uploaded 3D asset.
- * @description Leaves room for multiple storage providers while keeping the first schema pass small and nullable.
+ * Lifecycle state for the current generated 3D asset.
+ * @description Distinguishes claim-in-progress work from successful and failed generation attempts stored on the concept.
  */
-export type ConceptAssetRef = {
-  /** Backend that owns the object key so later retrieval code can choose the right client. */
-  provider: "gcs" | "s3" | "r2" | "local" | "unknown";
-  /** Provider-specific object key or relative path used as the durable lookup handle. */
-  key: string;
-  /** Public or signed URL when one is already available at read time. */
+export type AssetStatus = "pending" | "processing" | "ready" | "failed";
+
+/**
+ * Rich lifecycle metadata for a generated 3D asset.
+ * @description Keeps generation state, storage location, and safe error details together under one concept field.
+ */
+export type ConceptAsset = {
+  /** Current generation lifecycle state for the asset. */
+  status: AssetStatus;
+  /** Storage provider that owns the durable uploaded file. */
+  provider: "s3";
+  /** Upstream generator used to create the model. */
+  source: "hunyuan";
+  /** Provider-specific storage key for the generated 3D model. */
+  key?: string;
+  /** Stable public URL for the uploaded 3D model. */
   url?: string;
-  /** Media type for renderers that need to branch on file format. */
+  /** Provider-specific storage key for the preview image when one exists. */
+  previewKey?: string;
+  /** Stable public URL for the preview image when one exists. */
+  previewUrl?: string;
+  /** MIME type of the uploaded model asset. */
   mimeType?: string;
+  /** Prompt sent to Hunyuan for this generation attempt. */
+  prompt?: string;
+  /** Shared style preset identifier used across the generated collection. */
+  styleVersion: string;
+  /** Hunyuan job id for the current or most recent attempt. */
+  jobId?: string;
+  /** Safe error message for failed attempts. */
+  error?: string;
+  /** ISO timestamp when generation started. */
+  startedAt?: string | null;
+  /** ISO timestamp when generation completed or failed. */
+  completedAt?: string | null;
+  /** ISO timestamp when the asset lifecycle record last changed. */
+  updatedAt: string;
 };
 
 /**
@@ -133,8 +161,8 @@ export type StoredConcept = {
   metaphor: ConceptMetaphor | null;
   /** Optional embedding payload when semantic search generation is enabled. */
   embedding: ConceptEmbedding | null;
-  /** Optional 3D asset reference once object generation/upload is available. */
-  asset: ConceptAssetRef | null;
+  /** Optional 3D asset lifecycle object once object generation/upload is available. */
+  asset: ConceptAsset | null;
   /** ISO creation timestamp from Atlas persistence. */
   createdAt: string;
   /** ISO update timestamp from Atlas persistence. */

@@ -6,7 +6,7 @@
 import { ObjectId, type ClientSession, type Collection } from "mongodb";
 import { getDatabase } from "@/lib/server/mongodb.server";
 import type {
-  ConceptAssetRef,
+  ConceptAsset,
   ConceptEmbedding,
   ConceptMetaphor,
   ConceptRoomRef,
@@ -40,7 +40,23 @@ export type ConceptDocument = {
     generatedAt: Date | null;
     errorMessage?: string;
   } | null;
-  asset: ConceptAssetRef | null;
+  asset: {
+    status: "pending" | "processing" | "ready" | "failed";
+    provider: "s3";
+    source: "hunyuan";
+    key?: string;
+    url?: string;
+    previewKey?: string;
+    previewUrl?: string;
+    mimeType?: string;
+    prompt?: string;
+    styleVersion: string;
+    jobId?: string;
+    error?: string;
+    startedAt?: Date | null;
+    completedAt?: Date | null;
+    updatedAt: Date;
+  } | null;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -57,7 +73,7 @@ export type CreateConceptDocumentInput = {
   room: ConceptRoomRef;
   embedding?: ConceptEmbedding | null;
   metaphor?: ConceptMetaphor | null;
-  asset?: ConceptAssetRef | null;
+  asset?: ConceptAsset | null;
 };
 
 let conceptIndexesPromise: Promise<unknown> | undefined;
@@ -103,6 +119,46 @@ function toMetaphorDocument(metaphor?: ConceptMetaphor | null) {
 }
 
 /**
+ * Converts an optional transport asset lifecycle object into the database representation.
+ * @param asset - Optional asset payload from orchestration or persistence code.
+ * @returns A Mongo-safe asset document or null when no asset lifecycle exists yet.
+ * @remarks Centralizes date parsing so generation workers and repository tests both use one write shape.
+ */
+function toAssetDocument(asset?: ConceptAsset | null) {
+  if (!asset) {
+    return null;
+  }
+
+  return {
+    status: asset.status,
+    provider: asset.provider,
+    source: asset.source,
+    key: asset.key,
+    url: asset.url,
+    previewKey: asset.previewKey,
+    previewUrl: asset.previewUrl,
+    mimeType: asset.mimeType,
+    prompt: asset.prompt,
+    styleVersion: asset.styleVersion,
+    jobId: asset.jobId,
+    error: asset.error,
+    startedAt:
+      asset.startedAt === undefined
+        ? undefined
+        : asset.startedAt === null
+          ? null
+          : new Date(asset.startedAt),
+    completedAt:
+      asset.completedAt === undefined
+        ? undefined
+        : asset.completedAt === null
+          ? null
+          : new Date(asset.completedAt),
+    updatedAt: new Date(asset.updatedAt),
+  };
+}
+
+/**
  * Converts a MongoDB concept document into the feature transport shape.
  * @param document - Persisted concept document from Atlas.
  * @returns A JSON-safe concept payload suitable for server function responses.
@@ -138,7 +194,25 @@ function toStoredConcept(document: ConceptDocument): StoredConcept {
           createdAt: document.embedding.createdAt.toISOString(),
         }
       : null,
-    asset: document.asset,
+    asset: document.asset
+      ? {
+          status: document.asset.status,
+          provider: document.asset.provider,
+          source: document.asset.source,
+          key: document.asset.key,
+          url: document.asset.url,
+          previewKey: document.asset.previewKey,
+          previewUrl: document.asset.previewUrl,
+          mimeType: document.asset.mimeType,
+          prompt: document.asset.prompt,
+          styleVersion: document.asset.styleVersion,
+          jobId: document.asset.jobId,
+          error: document.asset.error,
+          startedAt: document.asset.startedAt?.toISOString() ?? null,
+          completedAt: document.asset.completedAt?.toISOString() ?? null,
+          updatedAt: document.asset.updatedAt.toISOString(),
+        }
+      : null,
     createdAt: document.createdAt.toISOString(),
     updatedAt: document.updatedAt.toISOString(),
   };
@@ -196,7 +270,7 @@ export async function createConceptForUser(
     roomSlug: input.room.slug,
     embedding: toEmbeddingDocument(input.embedding),
     metaphor: toMetaphorDocument(input.metaphor),
-    asset: input.asset ?? null,
+    asset: toAssetDocument(input.asset),
     createdAt: now,
     updatedAt: now,
   };

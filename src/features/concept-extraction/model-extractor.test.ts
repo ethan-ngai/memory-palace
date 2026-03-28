@@ -1,6 +1,6 @@
 /**
  * @file model-extractor.test.ts
- * @description Verifies Gemini and OpenAI-compatible response parsing, provider selection, and safe handling of malformed outputs.
+ * @description Verifies K2 response parsing and safe handling of malformed outputs.
  * @module concept-extraction
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -11,20 +11,20 @@ describe("extractConceptsWithModel", () => {
   beforeEach(() => {
     process.env = {
       ...originalEnv,
-      AI_PROVIDER: "gemini",
+      AI_PROVIDER: "k2",
       AUTH0_DOMAIN: "example.auth0.com",
       AUTH0_CLIENT_ID: "client-id",
       AUTH0_CLIENT_SECRET: "client-secret",
       AUTH0_AUDIENCE: "",
       APP_BASE_URL: "http://localhost:3000",
       GEMINI_API_BASE_URL: "https://generativelanguage.googleapis.com/v1beta",
-      GEMINI_API_KEY: "secret",
+      GEMINI_API_KEY: "gemini-secret",
       GEMINI_MODEL: "gemini-2.5-flash",
+      K2_API_BASE_URL: "https://api.k2.example/v1",
+      K2_API_KEY: "secret",
+      K2_MODEL: "k2-think-v2",
       MONGODB_URI: "mongodb://localhost:27017",
       MONGODB_DB_NAME: "memory-palace",
-      OPENAI_COMPATIBLE_API_BASE_URL: "https://example.com/v1",
-      OPENAI_COMPATIBLE_API_KEY: "openai-secret",
-      OPENAI_COMPATIBLE_MODEL: "k2",
       SESSION_COOKIE_SECRET: "x".repeat(32),
     };
     vi.restoreAllMocks();
@@ -35,20 +35,16 @@ describe("extractConceptsWithModel", () => {
     vi.restoreAllMocks();
   });
 
-  it("returns validated concepts from valid Gemini JSON", async () => {
+  it("returns validated concepts from valid K2 JSON", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue(
         new Response(
           JSON.stringify({
-            candidates: [
+            choices: [
               {
-                content: {
-                  parts: [
-                    {
-                      text: JSON.stringify([{ name: "Neuron", description: "A nerve cell." }]),
-                    },
-                  ],
+                message: {
+                  content: JSON.stringify([{ name: "Neuron", description: "A nerve cell." }]),
                 },
               },
             ],
@@ -68,20 +64,55 @@ describe("extractConceptsWithModel", () => {
     expect(result).toEqual([{ name: "Neuron", description: "A nerve cell." }]);
   });
 
-  it("repairs Gemini responses that include extra surrounding text", async () => {
+  it("routes PDF extraction through Gemini", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          candidates: [
+            {
+              content: {
+                parts: [
+                  {
+                    text: JSON.stringify([
+                      { name: "Graph", description: "A set of vertices and edges." },
+                    ]),
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+        { status: 200 },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { extractConceptsWithModel } =
+      await import("@/features/concept-extraction/server/model-extractor.server");
+    const result = await extractConceptsWithModel("Very long PDF text", {
+      type: "pdf",
+      source: {
+        kind: "path",
+        value: "/tmp/test.pdf",
+      },
+    });
+
+    expect(result).toEqual([{ name: "Graph", description: "A set of vertices and edges." }]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[0].toString()).toContain(":generateContent");
+  });
+
+  it("repairs K2 responses that include extra surrounding text", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue(
         new Response(
           JSON.stringify({
-            candidates: [
+            choices: [
               {
-                content: {
-                  parts: [
-                    {
-                      text: 'Here is the JSON:\n[{"name":"Mitosis","description":"Cell division."}]\nDone.',
-                    },
-                  ],
+                message: {
+                  content:
+                    'Here is the JSON:\n[{"name":"Mitosis","description":"Cell division."}]\nDone.',
                 },
               },
             ],
@@ -107,14 +138,11 @@ describe("extractConceptsWithModel", () => {
       vi.fn().mockResolvedValue(
         new Response(
           JSON.stringify({
-            candidates: [
+            choices: [
               {
-                content: {
-                  parts: [
-                    {
-                      text: '[{"name":"ATP","description":"Energy currency."},{"name":"","description":"missing name"},{"foo":"bar"}]',
-                    },
-                  ],
+                message: {
+                  content:
+                    '[{"name":"ATP","description":"Energy currency."},{"name":"","description":"missing name"},{"foo":"bar"}]',
                 },
               },
             ],
@@ -140,10 +168,10 @@ describe("extractConceptsWithModel", () => {
       vi.fn().mockResolvedValue(
         new Response(
           JSON.stringify({
-            candidates: [
+            choices: [
               {
-                content: {
-                  parts: [{ text: "[]" }],
+                message: {
+                  content: "[]",
                 },
               },
             ],
@@ -166,20 +194,36 @@ describe("extractConceptsWithModel", () => {
   it("throws a safe error when no JSON array can be recovered", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue(
-        new Response(
-          JSON.stringify({
-            candidates: [
-              {
-                content: {
-                  parts: [{ text: "I cannot comply." }],
+      vi
+        .fn()
+        .mockResolvedValueOnce(
+          new Response(
+            JSON.stringify({
+              choices: [
+                {
+                  message: {
+                    content: "I cannot comply.",
+                  },
                 },
-              },
-            ],
-          }),
-          { status: 200 },
+              ],
+            }),
+            { status: 200 },
+          ),
+        )
+        .mockResolvedValueOnce(
+          new Response(
+            JSON.stringify({
+              choices: [
+                {
+                  message: {
+                    content: "Still not JSON.",
+                  },
+                },
+              ],
+            }),
+            { status: 200 },
+          ),
         ),
-      ),
     );
 
     const { extractConceptsWithModel } =
@@ -193,34 +237,17 @@ describe("extractConceptsWithModel", () => {
     ).rejects.toThrow("Model response did not contain a JSON array.");
   });
 
-  it("can switch to an OpenAI-compatible provider for a later K2 cutover", async () => {
-    process.env.AI_PROVIDER = "openai-compatible";
-
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(
-        new Response(
-          JSON.stringify({
-            choices: [
-              {
-                message: {
-                  content: JSON.stringify([{ name: "Synapse", description: "A neuron junction." }]),
-                },
-              },
-            ],
-          }),
-          { status: 200 },
-        ),
-      ),
-    );
+  it("throws a safe K2 request error when the provider call fails", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 401 })));
 
     const { extractConceptsWithModel } =
       await import("@/features/concept-extraction/server/model-extractor.server");
-    const result = await extractConceptsWithModel("Synapses transmit signals", {
-      type: "text",
-      content: "Synapses transmit signals",
-    });
 
-    expect(result).toEqual([{ name: "Synapse", description: "A neuron junction." }]);
+    await expect(
+      extractConceptsWithModel("Unauthorized", {
+        type: "text",
+        content: "Unauthorized",
+      }),
+    ).rejects.toThrow("K2 request failed with status 401.");
   });
 });

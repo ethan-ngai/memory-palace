@@ -42,11 +42,22 @@ export const extractedConceptSchema = z.object({
   description: z.string().trim().min(1),
 });
 
-export const conceptAssetRefSchema = z.object({
-  provider: z.enum(["gcs", "s3", "r2", "local", "unknown"]),
-  key: z.string().min(1),
+export const conceptAssetSchema = z.object({
+  status: z.enum(["pending", "processing", "ready", "failed"]),
+  provider: z.literal("s3"),
+  source: z.literal("hunyuan"),
+  key: z.string().min(1).optional(),
   url: z.string().url().optional(),
+  previewKey: z.string().min(1).optional(),
+  previewUrl: z.string().url().optional(),
   mimeType: z.string().min(1).optional(),
+  prompt: z.string().min(1).optional(),
+  styleVersion: z.string().min(1),
+  jobId: z.string().min(1).optional(),
+  error: z.string().min(1).optional(),
+  startedAt: z.string().datetime().nullable().optional(),
+  completedAt: z.string().datetime().nullable().optional(),
+  updatedAt: z.string().datetime(),
 });
 
 export const conceptEmbeddingSchema = z.object({
@@ -80,7 +91,7 @@ export const storedConceptSchema = z.object({
   }),
   metaphor: conceptMetaphorSchema.nullable(),
   embedding: conceptEmbeddingSchema.nullable(),
-  asset: conceptAssetRefSchema.nullable(),
+  asset: conceptAssetSchema.nullable(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });

@@ -118,8 +118,14 @@ export async function generateConceptMetaphorsWithGemini(input: {
 }) {
   const serverEnv = getServerEnv();
   const model = serverEnv.GEMINI_MODEL || DEFAULT_GEMINI_MODEL;
+  const apiKey = serverEnv.GEMINI_API_KEY;
+
+  if (!apiKey) {
+    throw new Error("GEMINI_API_KEY is required when AI_PROVIDER is gemini.");
+  }
+
   const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(serverEnv.GEMINI_API_KEY)}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`,
     {
       method: "POST",
       headers: {
