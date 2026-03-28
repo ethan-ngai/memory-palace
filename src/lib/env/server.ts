@@ -11,6 +11,8 @@ const serverEnvSchema = z.object({
   AUTH0_CLIENT_SECRET: z.string().min(1),
   AUTH0_AUDIENCE: z.string().optional().default(""),
   APP_BASE_URL: z.string().url(),
+  GEMINI_API_KEY: z.string().min(1),
+  GEMINI_MODEL: z.string().optional().default(""),
   MONGODB_URI: z.string().min(1),
   MONGODB_DB_NAME: z.string().min(1),
   SESSION_COOKIE_SECRET: z.string().min(32),
