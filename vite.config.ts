@@ -2,7 +2,7 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { tanstackStart } from "@tanstack/react-start/plugin/vite";
 
-export default defineConfig({
+const config = {
   staged: {
     "*": "vp check --fix",
   },
@@ -10,4 +10,6 @@ export default defineConfig({
     tsconfigPaths: true,
   },
   plugins: [tanstackStart(), react()],
-});
+};
+
+export default defineConfig(config);

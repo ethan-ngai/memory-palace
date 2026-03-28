@@ -16,6 +16,7 @@ export type ExtractedConcept = {
 };
 
 /**
+
  * Backwards-compatible alias for the extraction result concept shape.
  * @description Preserves the original public type name so existing extraction callers do not need to change immediately.
  */
@@ -38,12 +39,11 @@ export type PdfSource =
 
 /**
  * Supported input payloads for concept extraction.
- * @description Discriminated union keeps validation strict while allowing text, PDF, and scraped URL flows to share one API.
+ * @description Discriminated union keeps validation strict while allowing text and PDF flows to share one API.
  */
 export type ExtractionInput =
-  | { type: "text"; content: string; format?: TextFormat }
-  | { type: "pdf"; source: PdfSource }
-  | { type: "url"; url: string };
+  | { type: "text"; content: string }
+  | { type: "pdf"; source: PdfSource };
 
 /**
  * JSON-serializable concept extraction result.
