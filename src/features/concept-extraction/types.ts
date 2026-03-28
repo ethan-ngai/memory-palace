@@ -13,12 +13,6 @@ export type Concept = {
 };
 
 /**
- * Classifies pasted text before ingestion.
- * @description Lets callers preserve Quizlet term-definition structure instead of treating all pasted text as prose.
- */
-export type TextFormat = "plain" | "quizlet";
-
-/**
  * JSON-safe representation of a PDF source.
  * @description Uses strings instead of browser-only file objects so the feature can stay inside TanStack server function boundaries.
  */
@@ -29,12 +23,11 @@ export type PdfSource =
 
 /**
  * Supported input payloads for concept extraction.
- * @description Discriminated union keeps validation strict while allowing text, PDF, and scraped URL flows to share one API.
+ * @description Discriminated union keeps validation strict while allowing text and PDF flows to share one API.
  */
 export type ExtractionInput =
-  | { type: "text"; content: string; format?: TextFormat }
-  | { type: "pdf"; source: PdfSource }
-  | { type: "url"; url: string };
+  | { type: "text"; content: string }
+  | { type: "pdf"; source: PdfSource };
 
 /**
  * JSON-serializable concept extraction result.
