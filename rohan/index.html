@@ -208,7 +208,21 @@
         display: flex;
         flex-direction: column;
         flex-shrink: 0;
-        overflow: hidden;
+        min-height: 0;
+        overflow-y: auto;
+        overflow-x: hidden;
+        overscroll-behavior: contain;
+      }
+      .sidebar::-webkit-scrollbar {
+        width: 10px;
+      }
+      .sidebar::-webkit-scrollbar-thumb {
+        background: var(--border);
+        border-radius: 999px;
+        border: 2px solid var(--panel);
+      }
+      .sidebar::-webkit-scrollbar-track {
+        background: transparent;
       }
       .sb {
         padding: 13px 15px;
@@ -379,16 +393,9 @@
         color: var(--green);
       }
       .anchor-scroll {
-        flex: 1;
-        overflow-y: auto;
-        padding: 7px;
-      }
-      .anchor-scroll::-webkit-scrollbar {
-        width: 3px;
-      }
-      .anchor-scroll::-webkit-scrollbar-thumb {
-        background: var(--border);
-        border-radius: 2px;
+        flex: 0 0 auto;
+        overflow: visible;
+        padding: 7px 9px 12px 7px;
       }
       .anchor-item {
         border: 1px solid var(--border);
@@ -428,6 +435,17 @@
         color: var(--muted);
         margin-top: 2px;
       }
+      .anchor-coords {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 6px;
+        margin-top: 8px;
+      }
+      .anchor-coords input {
+        margin-bottom: 0;
+        padding: 6px 7px;
+        font-size: 10px;
+      }
       .anchor-del {
         background: none;
         border: none;
@@ -456,6 +474,9 @@
         margin: 2px 0 6px;
       }
       #prop-file-input {
+        display: none;
+      }
+      #anchors-file-input {
         display: none;
       }
       #prop-loaded {
@@ -557,6 +578,14 @@
         <div class="sb">
           <button class="btn full export" onclick="exportJSON()">↓ Export anchors.json</button>
           <button
+            class="btn full"
+            onclick="document.getElementById('anchors-file-input').click()"
+            style="margin-top: 6px"
+          >
+            ↑ Import anchors.json
+          </button>
+          <input type="file" id="anchors-file-input" accept=".json,application/json" />
+          <button
             class="btn full perf active"
             id="btn-perf"
             onclick="togglePerformanceMode()"
@@ -633,6 +662,10 @@
         if (e.target.files[0]) loadPropFile(e.target.files[0]);
         e.target.value = "";
       });
+      document.getElementById("anchors-file-input").addEventListener("change", (e) => {
+        if (e.target.files[0]) loadAnchorsFile(e.target.files[0]);
+        e.target.value = "";
+      });
 
       const viewport = document.getElementById("viewport");
 
@@ -651,6 +684,7 @@
       const ANCHOR_RING_INNER_RADIUS = 0.006;
       const ANCHOR_RING_OUTER_RADIUS = 0.008;
       const ANCHOR_STEM_HEIGHT = 0.025;
+      const PROP_TO_ANCHOR_RATIO = 0.85;
 
       let orb = { theta: 0.3, phi: 1.1, r: 6 };
       let orbitTarget = new THREE.Vector3();
@@ -1276,6 +1310,21 @@
       }
 
       function addAnchor(pos, label, surface) {
+        anchors.push(
+          createAnchorRecord({
+            id: Date.now() + Math.random(),
+            label,
+            propSize: +getAnchorPropSize().toFixed(4),
+            surface,
+            position: { x: +pos.x.toFixed(4), y: +pos.y.toFixed(4), z: +pos.z.toFixed(4) },
+          }),
+        );
+        syncPropCountInput();
+        updateUI();
+        requestRender();
+      }
+
+      function createAnchorRecord(anchor) {
         const s = sceneScale;
         const group = new THREE.Group();
 
@@ -1305,17 +1354,73 @@
         );
         group.add(stem);
 
-        group.position.copy(pos);
+        group.position.set(anchor.position.x, anchor.position.y, anchor.position.z);
         scene.add(group);
-        anchors.push({
-          id: Date.now() + Math.random(),
-          label,
-          surface,
-          position: { x: +pos.x.toFixed(4), y: +pos.y.toFixed(4), z: +pos.z.toFixed(4) },
+        return {
+          ...anchor,
           mesh: group,
           sphere,
           ring,
           stem,
+        };
+      }
+
+      function setAnchorPosition(id, axis, value) {
+        const anchor = anchors.find((a) => a.id === id);
+        if (!anchor) return;
+        const parsed = Number.parseFloat(value);
+        if (!Number.isFinite(parsed)) return;
+        anchor.position[axis] = +parsed.toFixed(4);
+        anchor.mesh.position.set(anchor.position.x, anchor.position.y, anchor.position.z);
+        updateUI();
+        requestRender();
+      }
+
+      async function loadAnchorsFile(file) {
+        showLoading("Importing " + file.name + "…", "Reading anchors.json…");
+        try {
+          const text = await file.text();
+          const data = JSON.parse(text);
+          importAnchorsData(data);
+          hideLoading();
+        } catch (err) {
+          hideLoading();
+          alert("Error importing anchors.json: " + err.message);
+          console.error(err);
+        }
+      }
+
+      function importAnchorsData(data) {
+        if (!data || !Array.isArray(data.anchors)) {
+          throw new Error("Invalid anchors.json format.");
+        }
+
+        clearPropModels();
+        anchors.forEach((a) => scene.remove(a.mesh));
+        anchors = data.anchors.map((anchor, index) => {
+          if (
+            !anchor ||
+            !anchor.position ||
+            !Number.isFinite(anchor.position.x) ||
+            !Number.isFinite(anchor.position.y) ||
+            !Number.isFinite(anchor.position.z)
+          ) {
+            throw new Error("Anchor " + index + " is missing a valid position.");
+          }
+
+          return createAnchorRecord({
+            id: Date.now() + Math.random() + index,
+            label: anchor.label || "Anchor " + (index + 1),
+            propSize: Number.isFinite(anchor.propSize)
+              ? +anchor.propSize.toFixed(4)
+              : +getAnchorPropSize().toFixed(4),
+            surface: anchor.surface || "surface",
+            position: {
+              x: +anchor.position.x.toFixed(4),
+              y: +anchor.position.y.toFixed(4),
+              z: +anchor.position.z.toFixed(4),
+            },
+          });
         });
         syncPropCountInput();
         updateUI();
@@ -1374,6 +1479,11 @@
       <div class="anchor-body">
         <div class="anchor-name">${i + 1}. ${esc(a.label)}</div>
         <div class="anchor-meta">${a.surface} · ${a.position.x}, ${a.position.y}, ${a.position.z}</div>
+        <div class="anchor-coords">
+          <input type="number" step="0.1" value="${a.position.x}" onchange="setAnchorPosition(${a.id}, 'x', this.value)" />
+          <input type="number" step="0.1" value="${a.position.y}" onchange="setAnchorPosition(${a.id}, 'y', this.value)" />
+          <input type="number" step="0.1" value="${a.position.z}" onchange="setAnchorPosition(${a.id}, 'z', this.value)" />
+        </div>
       </div>
       <button class="anchor-del" onclick="removeAnchor(${a.id})">×</button>
     </div>`,
@@ -1399,6 +1509,7 @@
           anchors: anchors.map((a, i) => ({
             id: i,
             label: a.label,
+            propSize: a.propSize,
             surface: a.surface,
             position: a.position,
           })),
@@ -1412,6 +1523,7 @@
         URL.revokeObjectURL(url);
       }
       window.exportJSON = exportJSON;
+      window.setAnchorPosition = setAnchorPosition;
       window.scatterPropModels = scatterPropModels;
       window.rerollPropModels = rerollPropModels;
       window.clearPropModels = clearPropModels;
@@ -1506,14 +1618,18 @@
         root.position.y += size.y * 0.5;
 
         const maxDim = Math.max(size.x, size.y, size.z) || 1;
-        const targetSize = getAnchorVisualSize();
-        const scale = targetSize / maxDim;
-        root.scale.setScalar(scale);
+        const unitScale = 1 / maxDim;
+        root.scale.setScalar(unitScale);
+        root.userData.unitScale = unitScale;
         root.updateMatrixWorld(true);
       }
 
       function getAnchorVisualSize() {
         return Math.max(sceneScale * ANCHOR_STEM_HEIGHT, sceneScale * ANCHOR_RING_OUTER_RADIUS * 2);
+      }
+
+      function getAnchorPropSize() {
+        return sceneScale * ANCHOR_RING_OUTER_RADIUS * 2 * PROP_TO_ANCHOR_RATIO;
       }
 
       function buildPropBlueprints(root) {
@@ -1575,6 +1691,7 @@
 
       function placePropAtAnchor(anchor) {
         const root = cloneSkinned(propTemplate);
+        root.scale.multiplyScalar(anchor.propSize ?? getAnchorPropSize());
         root.position.set(anchor.position.x, anchor.position.y, anchor.position.z);
         root.rotation.y = Math.random() * Math.PI * 2;
         root.updateMatrixWorld(true);
@@ -1600,13 +1717,20 @@
       function scatterInstancedProps(selection) {
         const anchorMatrix = new THREE.Matrix4();
         const rotationMatrix = new THREE.Matrix4();
+        const scaleMatrix = new THREE.Matrix4();
 
         propBlueprints.forEach((bp) => {
           const instanced = new THREE.InstancedMesh(bp.geometry, bp.material, selection.length);
           selection.forEach((anchor, index) => {
             anchorMatrix.makeTranslation(anchor.position.x, anchor.position.y, anchor.position.z);
             rotationMatrix.makeRotationY(Math.random() * Math.PI * 2);
-            const matrix = anchorMatrix.clone().multiply(rotationMatrix).multiply(bp.matrix);
+            const anchorScale = anchor.propSize ?? getAnchorPropSize();
+            scaleMatrix.makeScale(anchorScale, anchorScale, anchorScale);
+            const matrix = anchorMatrix
+              .clone()
+              .multiply(rotationMatrix)
+              .multiply(scaleMatrix)
+              .multiply(bp.matrix);
             instanced.setMatrixAt(index, matrix);
           });
           instanced.instanceMatrix.needsUpdate = true;
