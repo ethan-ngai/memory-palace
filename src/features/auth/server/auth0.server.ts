@@ -7,29 +7,82 @@ import * as client from "openid-client";
 import { getRequestUrl } from "@tanstack/react-start/server";
 import { getServerEnv } from "@/lib/env/server";
 
-let auth0ConfigurationPromise: Promise<client.Configuration> | undefined;
+let auth0ConfigurationCache:
+  | {
+      domain: string;
+      promise: Promise<client.Configuration>;
+    }
+  | undefined;
 
+/**
+ * Resolves the Auth0 issuer URL from the validated server environment.
+ * @returns The tenant issuer base URL used for OIDC discovery.
+ */
 function getIssuerUrl() {
   const serverEnv = getServerEnv();
   return new URL(`https://${serverEnv.AUTH0_DOMAIN}`);
 }
 
+/**
+ * Builds the absolute callback URL registered with Auth0.
+ * @returns The local callback endpoint URL.
+ */
 export function getAuthCallbackUrl() {
   const serverEnv = getServerEnv();
   return new URL("/api/auth/callback", serverEnv.APP_BASE_URL);
 }
 
+/**
+ * Converts low-level discovery failures into actionable Auth0 configuration errors.
+ * @param error - Original discovery error raised by `openid-client`.
+ * @returns A wrapped error with guidance for local development.
+ */
+function toAuth0DiscoveryError(error: unknown) {
+  const message = error instanceof Error ? error.message : "Unknown Auth0 discovery error.";
+
+  return new Error(
+    [
+      "Auth0 discovery failed.",
+      "Check AUTH0_DOMAIN in your running server environment and restart the dev server after editing .env.",
+      `Underlying error: ${message}`,
+    ].join(" "),
+    { cause: error instanceof Error ? error : undefined },
+  );
+}
+
+/**
+ * Loads and caches the Auth0 OIDC configuration for the active tenant.
+ * @returns The discovered Auth0 client configuration.
+ * @remarks
+ * - The cache is keyed by domain so dev-server restarts or env changes do not keep using a stale tenant.
+ * - Failed discovery attempts clear the cache so a later retry can succeed without restarting the process.
+ */
 export async function getAuth0Configuration() {
   const serverEnv = getServerEnv();
+  const domain = serverEnv.AUTH0_DOMAIN;
 
-  auth0ConfigurationPromise ??= client.discovery(
-    getIssuerUrl(),
-    serverEnv.AUTH0_CLIENT_ID,
-    undefined,
-    client.ClientSecretPost(serverEnv.AUTH0_CLIENT_SECRET),
-  );
+  if (!auth0ConfigurationCache || auth0ConfigurationCache.domain !== domain) {
+    const promise = client
+      .discovery(
+        getIssuerUrl(),
+        serverEnv.AUTH0_CLIENT_ID,
+        undefined,
+        client.ClientSecretPost(serverEnv.AUTH0_CLIENT_SECRET),
+      )
+      .catch((error) => {
+        if (auth0ConfigurationCache?.domain === domain) {
+          auth0ConfigurationCache = undefined;
+        }
+        throw toAuth0DiscoveryError(error);
+      });
 
-  return auth0ConfigurationPromise;
+    auth0ConfigurationCache = {
+      domain,
+      promise,
+    };
+  }
+
+  return auth0ConfigurationCache.promise;
 }
 
 /**
