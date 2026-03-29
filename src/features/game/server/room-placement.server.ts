@@ -7,12 +7,16 @@ import { z } from "zod";
 import { readdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { requireAuthUser } from "@/features/auth/server/auth-session.server";
-import { listConceptsByRoomIdForUser } from "@/features/concept-extraction/server/concept.repository.server";
+import {
+  deleteConceptsByRoomIdForUser,
+  listConceptsByRoomIdForUser,
+} from "@/features/concept-extraction/server/concept.repository.server";
 import {
   findRoomByIdForUser,
   getRoomAnchorSetByRoomId,
   listRoomsByUserId,
   replaceRoomAnchorSet,
+  setRoomConceptCount,
 } from "@/features/concept-extraction/server/room.repository.server";
 import type { RoomSummary, StoredConcept } from "@/features/concept-extraction/types";
 import type {
@@ -163,7 +167,7 @@ export function buildRoomPlacementPlan(input: {
       conceptName: concept.name,
       conceptDescription: concept.description,
       metaphorObjectName: concept.metaphor?.objectName,
-      metaphorRationale: concept.metaphor?.rationale,
+      metaphorRationale: toDisplayMetaphorRationale(concept.metaphor?.rationale),
       assetUrl: buildPlacementAssetProxyUrl(concept.asset.url),
       previewUrl: concept.asset.previewUrl,
       position: anchor.position,
@@ -179,6 +183,28 @@ export function buildRoomPlacementPlan(input: {
     placements,
     unplacedConceptIds: shuffledConcepts.slice(placementCount).map((concept) => concept.id),
   };
+}
+
+/**
+ * Removes non-informative fallback rationale text from the placement payload.
+ * @param rationale - Stored metaphor rationale from concept persistence.
+ * @returns A user-facing rationale string, or `undefined` when no real explanation exists.
+ * @remarks The popup should only show concept-specific metaphor reasoning, not pipeline fallback copy.
+ */
+function toDisplayMetaphorRationale(rationale?: string) {
+  const normalized = rationale?.trim();
+  if (!normalized) {
+    return undefined;
+  }
+
+  if (
+    normalized ===
+    "Uses the concept label itself as the fallback stand-in so the pipeline always has a deterministic object prompt."
+  ) {
+    return undefined;
+  }
+
+  return normalized;
 }
 
 /**
@@ -316,4 +342,25 @@ export async function getRoomPlacementsForCurrentUser(
       concepts,
     }),
   };
+}
+
+/**
+ * Deletes all generated objects and source concepts associated with one owned room.
+ * @param input - Room id whose concept-backed objects should be cleared.
+ * @returns The updated room summary after all room concepts have been removed.
+ * @remarks In the MVP, room objects are derived from room concepts, so clearing objects is implemented as clearing those concepts and resetting the room count.
+ */
+export async function clearRoomObjectsForCurrentUser(input: { roomId: string }) {
+  const user = await requireAuthUser();
+  const room = await findRoomByIdForUser(user.id, input.roomId);
+  if (!room) {
+    throw new Error("Room not found for the current user.");
+  }
+
+  await deleteConceptsByRoomIdForUser(user.id, input.roomId);
+  return setRoomConceptCount({
+    userId: user.id,
+    roomId: input.roomId,
+    conceptCount: 0,
+  });
 }

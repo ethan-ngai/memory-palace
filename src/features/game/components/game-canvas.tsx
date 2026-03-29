@@ -7,6 +7,7 @@ import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import "@/features/game/styles/anchor-tagger.css";
 import type { RoomSummary } from "@/features/concept-extraction/types";
 import {
+  clearRoomObjects,
   getRoomAnchors,
   getRoomPlacements,
   importRoomAnchors,
@@ -425,6 +426,44 @@ export function GameCanvas(props: { placementRefreshToken?: number; roomRefreshT
     }
   }
 
+  /**
+   * Clears all concept-backed objects associated with the active room after explicit confirmation.
+   * @remarks The room keeps its imported anchors and scene bundle, but removing the room concepts clears all currently placeable generated objects.
+   */
+  async function handleClearRoomObjects() {
+    if (!selectedRoomId || isBusy) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      "Clear all objects for this room? This removes the room's imported concepts and generated objects.",
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setIsBusy(true);
+    setStatus("Clearing room objects...");
+    setSelectedPlacement(null);
+    try {
+      const updatedRoom = await clearRoomObjects({
+        data: {
+          roomId: selectedRoomId,
+        },
+      });
+      setRooms((current) =>
+        current.map((room) => (room.id === updatedRoom.id ? updatedRoom : room)),
+      );
+      await refreshPlacements();
+      setStatus("Cleared all room objects.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to clear room objects.";
+      setStatus(message);
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
   return (
     <section className="anchor-tagger-shell">
       <div className="anchor-tagger-drag-overlay" ref={dragOverlayRef}>
@@ -586,6 +625,14 @@ export function GameCanvas(props: { placementRefreshToken?: number; roomRefreshT
             </button>
             <button ref={btnPerfRef} className="btn full perf active" type="button">
               ⚡ Performance Mode: On
+            </button>
+            <button
+              className="btn full danger"
+              disabled={!selectedRoomId || isBusy}
+              onClick={() => void handleClearRoomObjects()}
+              type="button"
+            >
+              Clear Room Objects
             </button>
             <div className="stats">
               <div>

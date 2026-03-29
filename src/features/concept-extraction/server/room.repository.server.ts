@@ -295,3 +295,42 @@ export async function replaceRoomAnchorSet(
 
   return toRoomSummary(document);
 }
+
+/**
+ * Replaces the stored concept count for one owned room.
+ * @param input - Room id plus the exact count that should be stored.
+ * @param session - Optional MongoDB session used when the update participates in a wider write flow.
+ * @returns The updated room summary.
+ * @remarks Clearing a room removes all concept documents at once, so the room count needs an explicit reset rather than an increment/decrement delta.
+ */
+export async function setRoomConceptCount(
+  input: {
+    userId: string;
+    roomId: string;
+    conceptCount: number;
+  },
+  session?: ClientSession,
+) {
+  const rooms = await getRoomsCollection();
+  const now = new Date();
+  const document = await rooms.findOneAndUpdate(
+    { _id: new ObjectId(input.roomId), userId: input.userId },
+    {
+      $set: {
+        conceptCount: input.conceptCount,
+        updatedAt: now,
+      },
+    },
+    {
+      returnDocument: "after",
+      includeResultMetadata: false,
+      session,
+    },
+  );
+
+  if (!document) {
+    throw new Error(`Room ${input.roomId} was not found for the current user.`);
+  }
+
+  return toRoomSummary(document);
+}

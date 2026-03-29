@@ -4,14 +4,21 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GameCanvas } from "@/features/game/components/game-canvas";
 
-const { listViewerRooms, listBundledRooms, getRoomAnchors, getRoomPlacements, importRoomAnchors } =
-  vi.hoisted(() => ({
-    listViewerRooms: vi.fn(),
-    listBundledRooms: vi.fn(),
-    getRoomAnchors: vi.fn(),
-    getRoomPlacements: vi.fn(),
-    importRoomAnchors: vi.fn(),
-  }));
+const {
+  listViewerRooms,
+  listBundledRooms,
+  getRoomAnchors,
+  getRoomPlacements,
+  importRoomAnchors,
+  clearRoomObjects,
+} = vi.hoisted(() => ({
+  listViewerRooms: vi.fn(),
+  listBundledRooms: vi.fn(),
+  getRoomAnchors: vi.fn(),
+  getRoomPlacements: vi.fn(),
+  importRoomAnchors: vi.fn(),
+  clearRoomObjects: vi.fn(),
+}));
 
 const { createAnchorTagger, placementInspectListenerRef } = vi.hoisted(() => {
   const placementInspectListenerRef: {
@@ -38,6 +45,7 @@ vi.mock("@/features/game/functions", () => ({
   getRoomAnchors,
   getRoomPlacements,
   importRoomAnchors,
+  clearRoomObjects,
 }));
 
 vi.mock("@/features/game/engine/anchor-tagger", () => ({
@@ -71,7 +79,23 @@ describe("GameCanvas", () => {
       unplacedConceptIds: [],
     });
     importRoomAnchors.mockResolvedValue(undefined);
+    clearRoomObjects.mockResolvedValue({
+      id: "room-1",
+      userId: "user-1",
+      name: "Science",
+      slug: "science",
+      description: "STEM",
+      conceptCount: 0,
+      anchorSetImportedAt: null,
+      anchorCount: 0,
+      createdAt: "2026-03-29T00:00:00.000Z",
+      updatedAt: "2026-03-29T00:00:00.000Z",
+    });
     vi.stubGlobal("fetch", vi.fn());
+    vi.stubGlobal(
+      "confirm",
+      vi.fn(() => true),
+    );
   });
 
   afterEach(() => {
@@ -142,5 +166,23 @@ describe("GameCanvas", () => {
     expect(dialog.textContent).toContain("Battery");
     fireEvent.click(screen.getByRole("button", { name: /Close object details/i }));
     expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("clears room objects after the user confirms the destructive action", async () => {
+    render(<GameCanvas />);
+
+    await waitFor(() => {
+      expect(listViewerRooms).toHaveBeenCalled();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Clear Room Objects/i }));
+
+    await waitFor(() => {
+      expect(clearRoomObjects).toHaveBeenCalledWith({
+        data: {
+          roomId: "room-1",
+        },
+      });
+    });
   });
 });

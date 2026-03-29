@@ -384,6 +384,16 @@
   transform: translateY(-2px);
 }
 
+.anchor-tagger-shell .btn.danger {
+  border-color: rgba(255, 138, 138, 0.28);
+  color: var(--mp-danger);
+}
+
+.anchor-tagger-shell .btn.danger:hover {
+  background: rgba(255, 138, 138, 0.08);
+  border-color: rgba(255, 138, 138, 0.42);
+}
+
 .anchor-tagger-shell .dz-icon {
   color: var(--mp-accent-bright);
   font-size: 1.2rem;

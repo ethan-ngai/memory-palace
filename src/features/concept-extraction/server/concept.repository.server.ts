@@ -314,6 +314,24 @@ export async function listConceptsByRoomIdForUser(
 }
 
 /**
+ * Deletes all concepts assigned to one room for a single user.
+ * @param userId - Local application user id used to scope the deletion.
+ * @param roomId - Stable room id whose concepts should be removed.
+ * @param session - Optional MongoDB session used when the deletion participates in a wider write workflow.
+ * @returns Number of deleted concepts.
+ * @remarks Room-scoped clearing is used by the MVP viewer to remove generated objects without affecting other rooms.
+ */
+export async function deleteConceptsByRoomIdForUser(
+  userId: string,
+  roomId: string,
+  session?: ClientSession,
+) {
+  const concepts = await getConceptsCollection();
+  const result = await concepts.deleteMany({ userId, roomId }, { session });
+  return result.deletedCount ?? 0;
+}
+
+/**
  * Loads a specific ordered set of concepts for one user.
  * @param userId - Local application user id used to scope reads.
  * @param conceptIds - Concept ids whose order should be preserved in the returned array.

@@ -10,6 +10,7 @@ import {
   saveAuthedGameProgress,
 } from "@/features/game/server/game-progress.server";
 import {
+  clearRoomObjectsForCurrentUser,
   getRoomPlacementsForCurrentUser,
   getRoomAnchorsForCurrentUser,
   importRoomAnchorsForCurrentUser,
@@ -81,4 +82,14 @@ export const getRoomPlacements = createServerFn({ method: "POST" })
   .inputValidator(roomIdInputSchema)
   .handler(async ({ data }) => {
     return getRoomPlacementsForCurrentUser(data);
+  });
+
+/**
+ * Deletes all concept-backed objects associated with one selected room.
+ * @remarks The viewer uses this destructive action to clear the current room after explicit user confirmation.
+ */
+export const clearRoomObjects = createServerFn({ method: "POST" })
+  .inputValidator(roomIdInputSchema)
+  .handler(async ({ data }) => {
+    return clearRoomObjectsForCurrentUser(data);
   });
