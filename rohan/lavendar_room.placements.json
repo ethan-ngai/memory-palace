@@ -1,0 +1,266 @@
+{
+  "room": {
+    "inputPath": "/Users/agupta/Desktop/YHack/memory-palace/rohan/lavendar_room.glb",
+    "upAxis": "Y-up",
+    "horizontalFaceCount": 10091,
+    "surfaceCount": 2
+  },
+  "planner": {
+    "objectScaleBias": 0.4,
+    "requestedObjects": 22
+  },
+  "placeableSurfaceLayer": {
+    "upAxis": 1,
+    "tangentAxes": [0, 2],
+    "surfaces": [
+      {
+        "area": 39.46299572710624,
+        "centroid": [1.9785339130905344, 0.2781950135175119, -2.8356250610724065],
+        "height": 0.2781950135175119,
+        "index": 0,
+        "projectedMax": [12.538293899573091, 9.415309204587743],
+        "projectedMin": [-6.8812272612238985, -16.336467865533677]
+      },
+      {
+        "area": 6.342587940801608,
+        "centroid": [3.18521634040421, 2.110640505430074, 1.5801577836339429],
+        "height": 2.110640505430074,
+        "index": 1,
+        "projectedMax": [12.697732780701813, 9.236636426687937],
+        "projectedMin": [-6.821095715530703, -16.475570487386676]
+      }
+    ]
+  },
+  "placements": [
+    {
+      "center": [1.5467620749640107, 0.2781950135175119, -2.708845410493763],
+      "footprintHalfExtents": [0.33992345732560275, 0.23675194009590392],
+      "id": "duck-1",
+      "inputPath": "rohan/Duck.glb",
+      "surfaceIndex": 0,
+      "position": [1.4915426703687835, 0.237401463056386, -2.6936382698936585],
+      "scale": 0.41083726032057255,
+      "yaw": 1.9634954084936207,
+      "supportNormal": [0, 1, 0],
+      "centroidDistance": 0.44999999999999984,
+      "worldAabbMin": [1.206838617638408, 0.2781950135175119, -2.9455973505896673],
+      "worldAabbMax": [1.8866855322896134, 0.9110513087618843, -2.4720934703978594]
+    },
+    {
+      "center": [2.195040264036644, 0.2781950135175119, -2.7106250610724065],
+      "footprintHalfExtents": [0.33992345732560275, 0.23675194009590392],
+      "id": "duck-2",
+      "inputPath": "rohan/Duck.glb",
+      "surfaceIndex": 0,
+      "position": [2.139820859441417, 0.237401463056386, -2.695417920472302],
+      "scale": 0.41083726032057255,
+      "yaw": 0.39269908169872414,
+      "supportNormal": [0, 1, 0],
+      "centroidDistance": 0.2500000000000001,
+      "worldAabbMin": [1.8551168067110415, 0.2781950135175119, -2.9473770011683107],
+      "worldAabbMax": [2.534963721362247, 0.9110513087618843, -2.473873120976503]
+    }
+  ],
+  "failures": [
+    {
+      "id": "duck-3",
+      "inputPath": "rohan/Duck.glb",
+      "evaluation": {
+        "tooCloseToCentroid": 123,
+        "wrongCentroidDistance": 959,
+        "unsupported": 773,
+        "collided": 102
+      }
+    },
+    {
+      "id": "duck-4",
+      "inputPath": "rohan/Duck.glb",
+      "evaluation": {
+        "tooCloseToCentroid": 123,
+        "wrongCentroidDistance": 959,
+        "unsupported": 773,
+        "collided": 102
+      }
+    },
+    {
+      "id": "duck-5",
+      "inputPath": "rohan/Duck.glb",
+      "evaluation": {
+        "tooCloseToCentroid": 123,
+        "wrongCentroidDistance": 959,
+        "unsupported": 773,
+        "collided": 102
+      }
+    },
+    {
+      "id": "duck-6",
+      "inputPath": "rohan/Duck.glb",
+      "evaluation": {
+        "tooCloseToCentroid": 123,
+        "wrongCentroidDistance": 959,
+        "unsupported": 773,
+        "collided": 102
+      }
+    },
+    {
+      "id": "duck-7",
+      "inputPath": "rohan/Duck.glb",
+      "evaluation": {
+        "tooCloseToCentroid": 123,
+        "wrongCentroidDistance": 959,
+        "unsupported": 773,
+        "collided": 102
+      }
+    },
+    {
+      "id": "duck-8",
+      "inputPath": "rohan/Duck.glb",
+      "evaluation": {
+        "tooCloseToCentroid": 123,
+        "wrongCentroidDistance": 959,
+        "unsupported": 773,
+        "collided": 102
+      }
+    },
+    {
+      "id": "duck-9",
+      "inputPath": "rohan/Duck.glb",
+      "evaluation": {
+        "tooCloseToCentroid": 123,
+        "wrongCentroidDistance": 959,
+        "unsupported": 773,
+        "collided": 102
+      }
+    },
+    {
+      "id": "duck-10",
+      "inputPath": "rohan/Duck.glb",
+      "evaluation": {
+        "tooCloseToCentroid": 123,
+        "wrongCentroidDistance": 959,
+        "unsupported": 773,
+        "collided": 102
+      }
+    },
+    {
+      "id": "duck-11",
+      "inputPath": "rohan/Duck.glb",
+      "evaluation": {
+        "tooCloseToCentroid": 123,
+        "wrongCentroidDistance": 959,
+        "unsupported": 773,
+        "collided": 102
+      }
+    },
+    {
+      "id": "duck-12",
+      "inputPath": "rohan/Duck.glb",
+      "evaluation": {
+        "tooCloseToCentroid": 123,
+        "wrongCentroidDistance": 959,
+        "unsupported": 773,
+        "collided": 102
+      }
+    },
+    {
+      "id": "duck-13",
+      "inputPath": "rohan/Duck.glb",
+      "evaluation": {
+        "tooCloseToCentroid": 123,
+        "wrongCentroidDistance": 959,
+        "unsupported": 773,
+        "collided": 102
+      }
+    },
+    {
+      "id": "duck-14",
+      "inputPath": "rohan/Duck.glb",
+      "evaluation": {
+        "tooCloseToCentroid": 123,
+        "wrongCentroidDistance": 959,
+        "unsupported": 773,
+        "collided": 102
+      }
+    },
+    {
+      "id": "duck-15",
+      "inputPath": "rohan/Duck.glb",
+      "evaluation": {
+        "tooCloseToCentroid": 123,
+        "wrongCentroidDistance": 959,
+        "unsupported": 773,
+        "collided": 102
+      }
+    },
+    {
+      "id": "avocado-1",
+      "inputPath": "rohan/Avocado.glb",
+      "evaluation": {
+        "tooCloseToCentroid": 123,
+        "wrongCentroidDistance": 886,
+        "unsupported": 582,
+        "collided": 76
+      }
+    },
+    {
+      "id": "avocado-2",
+      "inputPath": "rohan/Avocado.glb",
+      "evaluation": {
+        "tooCloseToCentroid": 123,
+        "wrongCentroidDistance": 886,
+        "unsupported": 582,
+        "collided": 76
+      }
+    },
+    {
+      "id": "avocado-3",
+      "inputPath": "rohan/Avocado.glb",
+      "evaluation": {
+        "tooCloseToCentroid": 123,
+        "wrongCentroidDistance": 886,
+        "unsupported": 582,
+        "collided": 76
+      }
+    },
+    {
+      "id": "avocado-4",
+      "inputPath": "rohan/Avocado.glb",
+      "evaluation": {
+        "tooCloseToCentroid": 123,
+        "wrongCentroidDistance": 886,
+        "unsupported": 582,
+        "collided": 76
+      }
+    },
+    {
+      "id": "avocado-5",
+      "inputPath": "rohan/Avocado.glb",
+      "evaluation": {
+        "tooCloseToCentroid": 123,
+        "wrongCentroidDistance": 886,
+        "unsupported": 582,
+        "collided": 76
+      }
+    },
+    {
+      "id": "avocado-6",
+      "inputPath": "rohan/Avocado.glb",
+      "evaluation": {
+        "tooCloseToCentroid": 123,
+        "wrongCentroidDistance": 886,
+        "unsupported": 582,
+        "collided": 76
+      }
+    },
+    {
+      "id": "avocado-7",
+      "inputPath": "rohan/Avocado.glb",
+      "evaluation": {
+        "tooCloseToCentroid": 123,
+        "wrongCentroidDistance": 886,
+        "unsupported": 582,
+        "collided": 76
+      }
+    }
+  ]
+}

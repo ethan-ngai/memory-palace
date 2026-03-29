@@ -8,218 +8,239 @@
 // You should NOT make any changes in this file as it will be overwritten.
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
-import { Route as rootRouteImport } from "./routes/__root";
-import { Route as LoginRouteImport } from "./routes/login";
-import { Route as AuthenticatedRouteImport } from "./routes/_authenticated";
-import { Route as IndexRouteImport } from "./routes/index";
-import { Route as AuthenticatedProfileRouteImport } from "./routes/_authenticated/profile";
-import { Route as AuthenticatedPlayRouteImport } from "./routes/_authenticated/play";
-import { Route as ApiAuthLogoutRouteImport } from "./routes/api/auth/logout";
-import { Route as ApiAuthLoginRouteImport } from "./routes/api/auth/login";
-import { Route as ApiAuthCallbackRouteImport } from "./routes/api/auth/callback";
+import { Route as rootRouteImport } from './routes/__root'
+import { Route as ViewerRouteImport } from './routes/viewer'
+import { Route as LoginRouteImport } from './routes/login'
+import { Route as AuthenticatedRouteImport } from './routes/_authenticated'
+import { Route as IndexRouteImport } from './routes/index'
+import { Route as AuthenticatedProfileRouteImport } from './routes/_authenticated/profile'
+import { Route as AuthenticatedPlayRouteImport } from './routes/_authenticated/play'
+import { Route as ApiAuthLogoutRouteImport } from './routes/api/auth/logout'
+import { Route as ApiAuthLoginRouteImport } from './routes/api/auth/login'
+import { Route as ApiAuthCallbackRouteImport } from './routes/api/auth/callback'
 
+const ViewerRoute = ViewerRouteImport.update({
+  id: '/viewer',
+  path: '/viewer',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const LoginRoute = LoginRouteImport.update({
-  id: "/login",
-  path: "/login",
+  id: '/login',
+  path: '/login',
   getParentRoute: () => rootRouteImport,
-} as any);
+} as any)
 const AuthenticatedRoute = AuthenticatedRouteImport.update({
-  id: "/_authenticated",
+  id: '/_authenticated',
   getParentRoute: () => rootRouteImport,
-} as any);
+} as any)
 const IndexRoute = IndexRouteImport.update({
-  id: "/",
-  path: "/",
+  id: '/',
+  path: '/',
   getParentRoute: () => rootRouteImport,
-} as any);
+} as any)
 const AuthenticatedProfileRoute = AuthenticatedProfileRouteImport.update({
-  id: "/profile",
-  path: "/profile",
+  id: '/profile',
+  path: '/profile',
   getParentRoute: () => AuthenticatedRoute,
-} as any);
+} as any)
 const AuthenticatedPlayRoute = AuthenticatedPlayRouteImport.update({
-  id: "/play",
-  path: "/play",
+  id: '/play',
+  path: '/play',
   getParentRoute: () => AuthenticatedRoute,
-} as any);
+} as any)
 const ApiAuthLogoutRoute = ApiAuthLogoutRouteImport.update({
-  id: "/api/auth/logout",
-  path: "/api/auth/logout",
+  id: '/api/auth/logout',
+  path: '/api/auth/logout',
   getParentRoute: () => rootRouteImport,
-} as any);
+} as any)
 const ApiAuthLoginRoute = ApiAuthLoginRouteImport.update({
-  id: "/api/auth/login",
-  path: "/api/auth/login",
+  id: '/api/auth/login',
+  path: '/api/auth/login',
   getParentRoute: () => rootRouteImport,
-} as any);
+} as any)
 const ApiAuthCallbackRoute = ApiAuthCallbackRouteImport.update({
-  id: "/api/auth/callback",
-  path: "/api/auth/callback",
+  id: '/api/auth/callback',
+  path: '/api/auth/callback',
   getParentRoute: () => rootRouteImport,
-} as any);
+} as any)
 
 export interface FileRoutesByFullPath {
-  "/": typeof IndexRoute;
-  "/login": typeof LoginRoute;
-  "/play": typeof AuthenticatedPlayRoute;
-  "/profile": typeof AuthenticatedProfileRoute;
-  "/api/auth/callback": typeof ApiAuthCallbackRoute;
-  "/api/auth/login": typeof ApiAuthLoginRoute;
-  "/api/auth/logout": typeof ApiAuthLogoutRoute;
+  '/': typeof IndexRoute
+  '/login': typeof LoginRoute
+  '/viewer': typeof ViewerRoute
+  '/play': typeof AuthenticatedPlayRoute
+  '/profile': typeof AuthenticatedProfileRoute
+  '/api/auth/callback': typeof ApiAuthCallbackRoute
+  '/api/auth/login': typeof ApiAuthLoginRoute
+  '/api/auth/logout': typeof ApiAuthLogoutRoute
 }
 export interface FileRoutesByTo {
-  "/": typeof IndexRoute;
-  "/login": typeof LoginRoute;
-  "/play": typeof AuthenticatedPlayRoute;
-  "/profile": typeof AuthenticatedProfileRoute;
-  "/api/auth/callback": typeof ApiAuthCallbackRoute;
-  "/api/auth/login": typeof ApiAuthLoginRoute;
-  "/api/auth/logout": typeof ApiAuthLogoutRoute;
+  '/': typeof IndexRoute
+  '/login': typeof LoginRoute
+  '/viewer': typeof ViewerRoute
+  '/play': typeof AuthenticatedPlayRoute
+  '/profile': typeof AuthenticatedProfileRoute
+  '/api/auth/callback': typeof ApiAuthCallbackRoute
+  '/api/auth/login': typeof ApiAuthLoginRoute
+  '/api/auth/logout': typeof ApiAuthLogoutRoute
 }
 export interface FileRoutesById {
-  __root__: typeof rootRouteImport;
-  "/": typeof IndexRoute;
-  "/_authenticated": typeof AuthenticatedRouteWithChildren;
-  "/login": typeof LoginRoute;
-  "/_authenticated/play": typeof AuthenticatedPlayRoute;
-  "/_authenticated/profile": typeof AuthenticatedProfileRoute;
-  "/api/auth/callback": typeof ApiAuthCallbackRoute;
-  "/api/auth/login": typeof ApiAuthLoginRoute;
-  "/api/auth/logout": typeof ApiAuthLogoutRoute;
+  __root__: typeof rootRouteImport
+  '/': typeof IndexRoute
+  '/_authenticated': typeof AuthenticatedRouteWithChildren
+  '/login': typeof LoginRoute
+  '/viewer': typeof ViewerRoute
+  '/_authenticated/play': typeof AuthenticatedPlayRoute
+  '/_authenticated/profile': typeof AuthenticatedProfileRoute
+  '/api/auth/callback': typeof ApiAuthCallbackRoute
+  '/api/auth/login': typeof ApiAuthLoginRoute
+  '/api/auth/logout': typeof ApiAuthLogoutRoute
 }
 export interface FileRouteTypes {
-  fileRoutesByFullPath: FileRoutesByFullPath;
+  fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
-    | "/"
-    | "/login"
-    | "/play"
-    | "/profile"
-    | "/api/auth/callback"
-    | "/api/auth/login"
-    | "/api/auth/logout";
-  fileRoutesByTo: FileRoutesByTo;
+    | '/'
+    | '/login'
+    | '/viewer'
+    | '/play'
+    | '/profile'
+    | '/api/auth/callback'
+    | '/api/auth/login'
+    | '/api/auth/logout'
+  fileRoutesByTo: FileRoutesByTo
   to:
-    | "/"
-    | "/login"
-    | "/play"
-    | "/profile"
-    | "/api/auth/callback"
-    | "/api/auth/login"
-    | "/api/auth/logout";
+    | '/'
+    | '/login'
+    | '/viewer'
+    | '/play'
+    | '/profile'
+    | '/api/auth/callback'
+    | '/api/auth/login'
+    | '/api/auth/logout'
   id:
-    | "__root__"
-    | "/"
-    | "/_authenticated"
-    | "/login"
-    | "/_authenticated/play"
-    | "/_authenticated/profile"
-    | "/api/auth/callback"
-    | "/api/auth/login"
-    | "/api/auth/logout";
-  fileRoutesById: FileRoutesById;
+    | '__root__'
+    | '/'
+    | '/_authenticated'
+    | '/login'
+    | '/viewer'
+    | '/_authenticated/play'
+    | '/_authenticated/profile'
+    | '/api/auth/callback'
+    | '/api/auth/login'
+    | '/api/auth/logout'
+  fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
-  IndexRoute: typeof IndexRoute;
-  AuthenticatedRoute: typeof AuthenticatedRouteWithChildren;
-  LoginRoute: typeof LoginRoute;
-  ApiAuthCallbackRoute: typeof ApiAuthCallbackRoute;
-  ApiAuthLoginRoute: typeof ApiAuthLoginRoute;
-  ApiAuthLogoutRoute: typeof ApiAuthLogoutRoute;
+  IndexRoute: typeof IndexRoute
+  AuthenticatedRoute: typeof AuthenticatedRouteWithChildren
+  LoginRoute: typeof LoginRoute
+  ViewerRoute: typeof ViewerRoute
+  ApiAuthCallbackRoute: typeof ApiAuthCallbackRoute
+  ApiAuthLoginRoute: typeof ApiAuthLoginRoute
+  ApiAuthLogoutRoute: typeof ApiAuthLogoutRoute
 }
 
-declare module "@tanstack/react-router" {
+declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    "/login": {
-      id: "/login";
-      path: "/login";
-      fullPath: "/login";
-      preLoaderRoute: typeof LoginRouteImport;
-      parentRoute: typeof rootRouteImport;
-    };
-    "/_authenticated": {
-      id: "/_authenticated";
-      path: "";
-      fullPath: "/";
-      preLoaderRoute: typeof AuthenticatedRouteImport;
-      parentRoute: typeof rootRouteImport;
-    };
-    "/": {
-      id: "/";
-      path: "/";
-      fullPath: "/";
-      preLoaderRoute: typeof IndexRouteImport;
-      parentRoute: typeof rootRouteImport;
-    };
-    "/_authenticated/profile": {
-      id: "/_authenticated/profile";
-      path: "/profile";
-      fullPath: "/profile";
-      preLoaderRoute: typeof AuthenticatedProfileRouteImport;
-      parentRoute: typeof AuthenticatedRoute;
-    };
-    "/_authenticated/play": {
-      id: "/_authenticated/play";
-      path: "/play";
-      fullPath: "/play";
-      preLoaderRoute: typeof AuthenticatedPlayRouteImport;
-      parentRoute: typeof AuthenticatedRoute;
-    };
-    "/api/auth/logout": {
-      id: "/api/auth/logout";
-      path: "/api/auth/logout";
-      fullPath: "/api/auth/logout";
-      preLoaderRoute: typeof ApiAuthLogoutRouteImport;
-      parentRoute: typeof rootRouteImport;
-    };
-    "/api/auth/login": {
-      id: "/api/auth/login";
-      path: "/api/auth/login";
-      fullPath: "/api/auth/login";
-      preLoaderRoute: typeof ApiAuthLoginRouteImport;
-      parentRoute: typeof rootRouteImport;
-    };
-    "/api/auth/callback": {
-      id: "/api/auth/callback";
-      path: "/api/auth/callback";
-      fullPath: "/api/auth/callback";
-      preLoaderRoute: typeof ApiAuthCallbackRouteImport;
-      parentRoute: typeof rootRouteImport;
-    };
+    '/viewer': {
+      id: '/viewer'
+      path: '/viewer'
+      fullPath: '/viewer'
+      preLoaderRoute: typeof ViewerRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/login': {
+      id: '/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/_authenticated': {
+      id: '/_authenticated'
+      path: ''
+      fullPath: '/'
+      preLoaderRoute: typeof AuthenticatedRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/': {
+      id: '/'
+      path: '/'
+      fullPath: '/'
+      preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/_authenticated/profile': {
+      id: '/_authenticated/profile'
+      path: '/profile'
+      fullPath: '/profile'
+      preLoaderRoute: typeof AuthenticatedProfileRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/play': {
+      id: '/_authenticated/play'
+      path: '/play'
+      fullPath: '/play'
+      preLoaderRoute: typeof AuthenticatedPlayRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/api/auth/logout': {
+      id: '/api/auth/logout'
+      path: '/api/auth/logout'
+      fullPath: '/api/auth/logout'
+      preLoaderRoute: typeof ApiAuthLogoutRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/auth/login': {
+      id: '/api/auth/login'
+      path: '/api/auth/login'
+      fullPath: '/api/auth/login'
+      preLoaderRoute: typeof ApiAuthLoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/auth/callback': {
+      id: '/api/auth/callback'
+      path: '/api/auth/callback'
+      fullPath: '/api/auth/callback'
+      preLoaderRoute: typeof ApiAuthCallbackRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 interface AuthenticatedRouteChildren {
-  AuthenticatedPlayRoute: typeof AuthenticatedPlayRoute;
-  AuthenticatedProfileRoute: typeof AuthenticatedProfileRoute;
+  AuthenticatedPlayRoute: typeof AuthenticatedPlayRoute
+  AuthenticatedProfileRoute: typeof AuthenticatedProfileRoute
 }
 
 const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
   AuthenticatedPlayRoute: AuthenticatedPlayRoute,
   AuthenticatedProfileRoute: AuthenticatedProfileRoute,
-};
+}
 
 const AuthenticatedRouteWithChildren = AuthenticatedRoute._addFileChildren(
   AuthenticatedRouteChildren,
-);
+)
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AuthenticatedRoute: AuthenticatedRouteWithChildren,
   LoginRoute: LoginRoute,
+  ViewerRoute: ViewerRoute,
   ApiAuthCallbackRoute: ApiAuthCallbackRoute,
   ApiAuthLoginRoute: ApiAuthLoginRoute,
   ApiAuthLogoutRoute: ApiAuthLogoutRoute,
-};
+}
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
-  ._addFileTypes<FileRouteTypes>();
+  ._addFileTypes<FileRouteTypes>()
 
-import type { getRouter } from "./router.ts";
-import type { startInstance } from "./start.ts";
-declare module "@tanstack/react-start" {
+import type { getRouter } from './router.ts'
+import type { startInstance } from './start.ts'
+declare module '@tanstack/react-start' {
   interface Register {
-    ssr: true;
-    router: Awaited<ReturnType<typeof getRouter>>;
-    config: Awaited<ReturnType<typeof startInstance.getOptions>>;
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+    config: Awaited<ReturnType<typeof startInstance.getOptions>>
   }
 }
