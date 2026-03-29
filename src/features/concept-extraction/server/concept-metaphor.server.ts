@@ -10,7 +10,6 @@ import {
   findConceptsByIdsForUser,
   updateConceptMetaphorById,
 } from "@/features/concept-extraction/server/concept.repository.server";
-import { generateConceptMetaphorsWithGemini } from "@/features/concept-extraction/server/gemini-concept-metaphor.server";
 import type {
   ConceptMetaphor,
   GenerateConceptMetaphorsInput,
@@ -58,7 +57,7 @@ export const generateConceptMetaphorsInputSchema = z.object({
   conceptIds: z.array(z.string().min(1)).min(1),
 });
 
-const geminiConceptMetaphorSchema = z.object({
+const generatedConceptMetaphorSchema = z.object({
   conceptId: z.string().min(1),
   objectName: z.string().trim().min(1),
   prompt: z.string().trim().min(1),
@@ -82,9 +81,9 @@ function validateUniqueConceptIds(conceptIds: string[]) {
 }
 
 /**
- * Validates exact Gemini metaphor coverage for the requested concepts.
+ * Validates exact generated metaphor coverage for the requested concepts.
  * @param concepts - Stored concepts requested by the caller.
- * @param metaphors - Raw metaphor payloads returned by Gemini.
+ * @param metaphors - Raw metaphor payloads returned by the local generator.
  * @returns Parsed metaphor payloads guaranteed to match the requested concepts one-for-one.
  * @remarks Rejects duplicates, omissions, and foreign ids before any concept updates occur.
  */
@@ -97,7 +96,7 @@ function validateMetaphorCoverage(concepts: StoredConcept[], metaphors: unknown[
   const seen = new Set<string>();
 
   return metaphors.map((metaphor) => {
-    const parsed = geminiConceptMetaphorSchema.parse(metaphor);
+    const parsed = generatedConceptMetaphorSchema.parse(metaphor);
 
     if (!conceptIds.has(parsed.conceptId)) {
       throw new Error(`Gemini returned an unknown concept id "${parsed.conceptId}".`);
@@ -109,6 +108,179 @@ function validateMetaphorCoverage(concepts: StoredConcept[], metaphors: unknown[
 
     seen.add(parsed.conceptId);
     return parsed;
+  });
+}
+
+/**
+ * Removes parenthetical qualifiers and punctuation from one concept label.
+ * @param value - Stored concept name.
+ * @returns A lower-noise phrase suitable for keyword matching.
+ * @remarks The local metaphor generator uses concept labels as hints, so this cleanup keeps naming variations from breaking deterministic mapping.
+ */
+function normalizeConceptLabel(value: string) {
+  return value
+    .normalize("NFKC")
+    .replace(/\([^)]*\)/gu, " ")
+    .replace(/[\u2010-\u2015\u2212]/gu, "-")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Chooses one deterministic physical stand-in for a stored concept.
+ * @param concept - Stored concept requiring a metaphor.
+ * @returns A short object name and rationale suitable for immediate persistence.
+ * @remarks This intentionally favors reliability over creativity so the pipeline can keep producing plain 3D prompts when Gemini is unavailable or throttled.
+ */
+function inferMetaphorForConcept(concept: StoredConcept) {
+  const normalizedName = normalizeConceptLabel(concept.name);
+  const normalizedDescription = normalizeConceptLabel(concept.description);
+  const haystack = `${normalizedName} ${normalizedDescription}`.trim();
+
+  if (haystack.includes("balls and bins")) {
+    return {
+      objectName: "Ball and Bin Set",
+      rationale: "Directly represents the balls-and-bins framing with one concrete physical set.",
+    };
+  }
+
+  if (haystack.includes("function") && haystack.includes("arrangement")) {
+    return {
+      objectName: "Sorting Conveyor Belt",
+      rationale:
+        "Shows items being directed into destinations, matching the idea of mapping each input into one output slot.",
+    };
+  }
+
+  if (haystack.includes("distinguishable balls")) {
+    return {
+      objectName: "Numbered Billiard Balls",
+      rationale: "Each ball carries its own visible identity, matching distinguishable elements.",
+    };
+  }
+
+  if (haystack.includes("indistinguishable balls")) {
+    return {
+      objectName: "Marbles",
+      rationale: "Identical marbles emphasize that only the count in each group matters.",
+    };
+  }
+
+  if (haystack.includes("distinguishable bins")) {
+    return {
+      objectName: "Numbered Mailboxes",
+      rationale: "Labeled mailboxes make each destination visibly distinct.",
+    };
+  }
+
+  if (haystack.includes("indistinguishable bins")) {
+    return {
+      objectName: "Buckets",
+      rationale: "Plain identical buckets highlight that only the grouping matters, not the label.",
+    };
+  }
+
+  if (haystack.includes("multiplication rule")) {
+    return {
+      objectName: "Gear Train",
+      rationale: "Interlocking gears suggest chained choices multiplying into a larger total.",
+    };
+  }
+
+  if (haystack.includes("injective")) {
+    return {
+      objectName: "Coat Rack",
+      rationale: "One coat per hook matches a one-to-one mapping with no collisions.",
+    };
+  }
+
+  if (haystack.includes("pigeonhole")) {
+    return {
+      objectName: "Pigeonhole Shelf",
+      rationale: "An overfilled pigeonhole shelf directly evokes the impossibility argument.",
+    };
+  }
+
+  if (haystack.includes("stars and stripes") || haystack.includes("stars and bars")) {
+    return {
+      objectName: "Abacus",
+      rationale:
+        "An abacus turns grouped counts into a simple physical arrangement, matching the counting bijection.",
+    };
+  }
+
+  if (haystack.includes("surjective")) {
+    return {
+      objectName: "Sprinkler",
+      rationale:
+        "A sprinkler reaching every patch of ground mirrors covering every codomain target.",
+    };
+  }
+
+  if (haystack.includes("hash")) {
+    return {
+      objectName: "Mail Sorter",
+      rationale: "A sorter dropping items into labeled slots mirrors hashing items into buckets.",
+    };
+  }
+
+  if (haystack.includes("donut")) {
+    return {
+      objectName: "Donut Box",
+      rationale: "A donut box keeps the real-world counting application concrete and recognizable.",
+    };
+  }
+
+  if (
+    haystack.includes("integer solutions") ||
+    haystack.includes("equation") ||
+    haystack.includes("x y z")
+  ) {
+    return {
+      objectName: "Abacus",
+      rationale: "An abacus is a plain object for distributing counts across named positions.",
+    };
+  }
+
+  if (haystack.includes("randomized algorithm")) {
+    return {
+      objectName: "Lottery Machine",
+      rationale: "A lottery machine makes random assignment visible in one familiar object.",
+    };
+  }
+
+  if (haystack.includes("counting functions")) {
+    return {
+      objectName: "Counter",
+      rationale: "A counter is a simple stand-in for systematically tallying possible mappings.",
+    };
+  }
+
+  return {
+    objectName: concept.name,
+    rationale:
+      "Uses the concept label itself as the fallback stand-in so the pipeline always has a deterministic object prompt.",
+  };
+}
+
+/**
+ * Generates deterministic metaphor payloads for stored concepts without calling an external model.
+ * @param concepts - Stored concepts that need concrete object stand-ins.
+ * @returns One generated metaphor payload per concept.
+ * @remarks This keeps the pipeline operational during provider throttling while preserving the same storage contract used by the former Gemini path.
+ */
+function generateConceptMetaphorsLocally(concepts: StoredConcept[]) {
+  return concepts.map((concept) => {
+    const inferred = inferMetaphorForConcept(concept);
+
+    return {
+      conceptId: concept.id,
+      objectName: inferred.objectName,
+      prompt: toPlainObjectPrompt(inferred.objectName),
+      rationale: inferred.rationale,
+    };
   });
 }
 
@@ -164,7 +336,7 @@ function toReadyMetaphor(input: {
  * Generates or regenerates concept metaphors for the current authenticated user.
  * @param input - Stored concept ids whose current metaphors should be created or replaced.
  * @returns Updated stored concepts in the same order as the request payload.
- * @remarks Fails closed so malformed Gemini output or mixed-ownership requests cannot leave partially updated concept state behind.
+ * @remarks Fails closed so malformed concept selection or mixed-ownership requests cannot leave partially updated concept state behind.
  */
 export async function generateConceptMetaphorsForCurrentUser(
   input: GenerateConceptMetaphorsInput,
@@ -194,13 +366,7 @@ export async function generateConceptMetaphorsForUser(
     throw new Error("One or more requested concepts were not found for the current user.");
   }
 
-  const metaphors = validateMetaphorCoverage(
-    concepts,
-    await generateConceptMetaphorsWithGemini({
-      concepts,
-      prompt: CONCEPT_METAPHOR_PROMPT,
-    }),
-  );
+  const metaphors = validateMetaphorCoverage(concepts, generateConceptMetaphorsLocally(concepts));
   const client = await getMongoClient();
   const session = client.startSession();
 

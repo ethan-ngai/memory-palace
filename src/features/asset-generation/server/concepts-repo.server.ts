@@ -49,12 +49,22 @@ function toConceptRow(document: ConceptDocument): AssetGenerationConceptRow {
   };
 }
 
-function getNeedsAssetFilter(userId: string) {
+/**
+ * Builds the MongoDB selector for concepts that are ready to enter asset generation.
+ * @param userId - Current authenticated user id.
+ * @param excludedConceptIds - Concept ids already attempted earlier in the same batch run.
+ * @returns MongoDB filter that skips in-flight, ready, and already-attempted concepts.
+ * @remarks Excluding attempted ids prevents one failed concept from being re-selected again in the next fixed-size batch wave.
+ */
+function getNeedsAssetFilter(userId: string, excludedConceptIds: string[] = []) {
+  const excludedObjectIds = excludedConceptIds.map((id) => new ObjectId(id));
+
   return {
     userId,
     "metaphor.status": "ready",
     "metaphor.prompt": { $exists: true, $ne: "" },
     $or: [{ asset: { $exists: false } }, { asset: null }, { "asset.status": "failed" }],
+    ...(excludedObjectIds.length > 0 ? { _id: { $nin: excludedObjectIds } } : {}),
   } satisfies Filter<ConceptDocument>;
 }
 
@@ -62,13 +72,18 @@ function getNeedsAssetFilter(userId: string) {
  * Reads concepts owned by the current user that still need generated assets.
  * @param userId - Current authenticated user id.
  * @param limit - Maximum number of concepts to select for the batch.
+ * @param excludedConceptIds - Concept ids already attempted earlier in the current batch run.
  * @returns Candidate concept rows ready to be claimed by the worker.
  * @remarks Excludes concepts already marked `processing` or `ready` so the batch does not duplicate in-flight work.
  */
-export async function getConceptsNeedingAssets(userId: string, limit: number) {
+export async function getConceptsNeedingAssets(
+  userId: string,
+  limit: number,
+  excludedConceptIds: string[] = [],
+) {
   const concepts = await getConceptsCollection();
   const documents = await concepts
-    .find(getNeedsAssetFilter(userId))
+    .find(getNeedsAssetFilter(userId, excludedConceptIds))
     .sort({ updatedAt: -1 })
     .limit(limit)
     .toArray();

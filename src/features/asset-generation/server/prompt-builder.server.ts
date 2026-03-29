@@ -15,7 +15,7 @@ export const ASSET_STYLE_VERSION = "standard-3d-v3";
  * Shared style suffix appended when the core object prompt is short enough.
  * @description Keeps the live TRELLIS prompt focused on a centered object shot without bloating the request.
  */
-export const SHARED_STYLE_BLOCK = "isolated single object, white background";
+export const SHARED_STYLE_BLOCK = "isolated single object";
 
 /**
  * Removes noisy punctuation so the generation prompt stays compact and legible.

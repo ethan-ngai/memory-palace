@@ -1,5 +1,22 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+function makeReadyConcept(id: string) {
+  return {
+    id,
+    userId: "user-1",
+    name: `Concept ${id}`,
+    description: `Description for ${id}.`,
+    metaphor: {
+      status: "ready" as const,
+      objectName: `object ${id}`,
+      prompt: `a prompt for ${id}`,
+      rationale: "Signals.",
+      generatedAt: "2026-03-28T12:00:00.000Z",
+    },
+    asset: null,
+  };
+}
+
 const requireAuthUser = vi.fn();
 const getConceptsNeedingAssets = vi.fn();
 const tryMarkConceptProcessing = vi.fn();
@@ -40,36 +57,11 @@ describe("generateAssetsForPendingConcepts", () => {
   });
 
   it("processes a batch and returns summary counts", async () => {
-    getConceptsNeedingAssets.mockResolvedValue([
-      {
-        id: "concept-1",
-        userId: "user-1",
-        name: "Neuron",
-        description: "Cell that transmits signals.",
-        metaphor: {
-          status: "ready",
-          objectName: "glass neuron lantern",
-          prompt: "A glass neuron lantern.",
-          rationale: "Signals.",
-          generatedAt: "2026-03-28T12:00:00.000Z",
-        },
-        asset: null,
-      },
-      {
-        id: "concept-2",
-        userId: "user-1",
-        name: "Atom",
-        description: "Basic unit of matter.",
-        metaphor: {
-          status: "ready",
-          objectName: "clockwork atom core",
-          prompt: "A clockwork atom core.",
-          rationale: "Structure.",
-          generatedAt: "2026-03-28T12:00:00.000Z",
-        },
-        asset: null,
-      },
+    getConceptsNeedingAssets.mockResolvedValueOnce([
+      makeReadyConcept("concept-1"),
+      makeReadyConcept("concept-2"),
     ]);
+    getConceptsNeedingAssets.mockResolvedValueOnce([]);
     tryMarkConceptProcessing.mockResolvedValue(true);
     generateTrellisModel.mockResolvedValue({
       modelUrl: "https://example.com/model.glb",
@@ -94,39 +86,21 @@ describe("generateAssetsForPendingConcepts", () => {
     expect(result.succeeded).toBe(2);
     expect(result.failed).toBe(0);
     expect(markConceptDone).toHaveBeenCalledTimes(2);
+    expect(getConceptsNeedingAssets).toHaveBeenNthCalledWith(1, "user-1", 5, []);
+    expect(getConceptsNeedingAssets).toHaveBeenNthCalledWith(
+      2,
+      "user-1",
+      5,
+      expect.arrayContaining(["concept-1", "concept-2"]),
+    );
   });
 
   it("continues when one concept fails", async () => {
-    getConceptsNeedingAssets.mockResolvedValue([
-      {
-        id: "concept-1",
-        userId: "user-1",
-        name: "Neuron",
-        description: "Cell that transmits signals.",
-        metaphor: {
-          status: "ready",
-          objectName: "glass neuron lantern",
-          prompt: "A glass neuron lantern.",
-          rationale: "Signals.",
-          generatedAt: "2026-03-28T12:00:00.000Z",
-        },
-        asset: null,
-      },
-      {
-        id: "concept-2",
-        userId: "user-1",
-        name: "Atom",
-        description: "Basic unit of matter.",
-        metaphor: {
-          status: "ready",
-          objectName: "clockwork atom core",
-          prompt: "A clockwork atom core.",
-          rationale: "Structure.",
-          generatedAt: "2026-03-28T12:00:00.000Z",
-        },
-        asset: null,
-      },
+    getConceptsNeedingAssets.mockResolvedValueOnce([
+      makeReadyConcept("concept-1"),
+      makeReadyConcept("concept-2"),
     ]);
+    getConceptsNeedingAssets.mockResolvedValueOnce([]);
     tryMarkConceptProcessing.mockResolvedValue(true);
     generateTrellisModel
       .mockResolvedValueOnce({
@@ -152,22 +126,8 @@ describe("generateAssetsForPendingConcepts", () => {
   });
 
   it("skips concepts that lose the claim race", async () => {
-    getConceptsNeedingAssets.mockResolvedValue([
-      {
-        id: "concept-1",
-        userId: "user-1",
-        name: "Neuron",
-        description: "Cell that transmits signals.",
-        metaphor: {
-          status: "ready",
-          objectName: "glass neuron lantern",
-          prompt: "A glass neuron lantern.",
-          rationale: "Signals.",
-          generatedAt: "2026-03-28T12:00:00.000Z",
-        },
-        asset: null,
-      },
-    ]);
+    getConceptsNeedingAssets.mockResolvedValueOnce([makeReadyConcept("concept-1")]);
+    getConceptsNeedingAssets.mockResolvedValueOnce([]);
     tryMarkConceptProcessing.mockResolvedValue(false);
 
     const { generateAssetsForPendingConcepts } =
@@ -188,22 +148,8 @@ describe("generateAssetsForPendingConcepts", () => {
   });
 
   it("normalizes upload failures into a safe asset error", async () => {
-    getConceptsNeedingAssets.mockResolvedValue([
-      {
-        id: "concept-1",
-        userId: "user-1",
-        name: "Neuron",
-        description: "Cell that transmits signals.",
-        metaphor: {
-          status: "ready",
-          objectName: "glass neuron lantern",
-          prompt: "A glass neuron lantern.",
-          rationale: "Signals.",
-          generatedAt: "2026-03-28T12:00:00.000Z",
-        },
-        asset: null,
-      },
-    ]);
+    getConceptsNeedingAssets.mockResolvedValueOnce([makeReadyConcept("concept-1")]);
+    getConceptsNeedingAssets.mockResolvedValueOnce([]);
     tryMarkConceptProcessing.mockResolvedValue(true);
     generateTrellisModel.mockResolvedValue({
       modelUrl: "https://example.com/model.glb",
@@ -229,22 +175,8 @@ describe("generateAssetsForPendingConcepts", () => {
   });
 
   it("preserves detailed Trellis provider failures in the batch result", async () => {
-    getConceptsNeedingAssets.mockResolvedValue([
-      {
-        id: "concept-1",
-        userId: "user-1",
-        name: "Neuron",
-        description: "Cell that transmits signals.",
-        metaphor: {
-          status: "ready",
-          objectName: "glass neuron lantern",
-          prompt: "A glass neuron lantern.",
-          rationale: "Signals.",
-          generatedAt: "2026-03-28T12:00:00.000Z",
-        },
-        asset: null,
-      },
-    ]);
+    getConceptsNeedingAssets.mockResolvedValueOnce([makeReadyConcept("concept-1")]);
+    getConceptsNeedingAssets.mockResolvedValueOnce([]);
     tryMarkConceptProcessing.mockResolvedValue(true);
     generateTrellisModel.mockRejectedValue(
       new Error("Trellis generation failed. Generation submit failed with status 503."),
@@ -266,22 +198,8 @@ describe("generateAssetsForPendingConcepts", () => {
   });
 
   it("uses a synthetic generation id as the persisted job id", async () => {
-    getConceptsNeedingAssets.mockResolvedValue([
-      {
-        id: "concept-1",
-        userId: "user-1",
-        name: "Neuron",
-        description: "Cell that transmits signals.",
-        metaphor: {
-          status: "ready",
-          objectName: "glass neuron lantern",
-          prompt: "A glass neuron lantern.",
-          rationale: "Signals.",
-          generatedAt: "2026-03-28T12:00:00.000Z",
-        },
-        asset: null,
-      },
-    ]);
+    getConceptsNeedingAssets.mockResolvedValueOnce([makeReadyConcept("concept-1")]);
+    getConceptsNeedingAssets.mockResolvedValueOnce([]);
     tryMarkConceptProcessing.mockResolvedValue(true);
     generateTrellisModel.mockResolvedValue({
       modelUrl: "https://example.com/model.glb",
@@ -309,5 +227,98 @@ describe("generateAssetsForPendingConcepts", () => {
         jobId: expect.any(String),
       }),
     );
+  });
+
+  it("processes all ready concepts in repeated fixed waves of five", async () => {
+    getConceptsNeedingAssets
+      .mockResolvedValueOnce([
+        makeReadyConcept("concept-1"),
+        makeReadyConcept("concept-2"),
+        makeReadyConcept("concept-3"),
+        makeReadyConcept("concept-4"),
+        makeReadyConcept("concept-5"),
+      ])
+      .mockResolvedValueOnce([makeReadyConcept("concept-6"), makeReadyConcept("concept-7")])
+      .mockResolvedValueOnce([]);
+    tryMarkConceptProcessing.mockResolvedValue(true);
+    generateTrellisModel.mockResolvedValue({
+      modelUrl: "https://example.com/model.glb",
+      providerFileUrl: "https://trellis.example.com/model.glb",
+      mimeType: "model/gltf-binary",
+      fileExtension: "glb",
+    });
+    uploadGeneratedAssetToS3.mockResolvedValue({
+      key: "concept-assets/user-1/concept-1/generation-1.glb",
+      url: "https://cdn.example.com/concept-assets/user-1/concept-1/generation-1.glb",
+      mimeType: "model/gltf-binary",
+    });
+
+    const { generateAssetsForPendingConcepts } =
+      await import("@/features/asset-generation/server/asset-generation.server");
+    const result = await generateAssetsForPendingConcepts();
+
+    expect(result.totalSelected).toBe(7);
+    expect(result.succeeded).toBe(7);
+    expect(getConceptsNeedingAssets).toHaveBeenCalledTimes(3);
+    expect(getConceptsNeedingAssets).toHaveBeenNthCalledWith(1, "user-1", 5, []);
+    expect(getConceptsNeedingAssets).toHaveBeenNthCalledWith(
+      2,
+      "user-1",
+      5,
+      expect.arrayContaining(["concept-1", "concept-2", "concept-3", "concept-4", "concept-5"]),
+    );
+  });
+
+  it("starts five provider requests together when a full wave is available", async () => {
+    const deferreds = Array.from({ length: 5 }, () =>
+      Promise.withResolvers<{
+        modelUrl: string;
+        providerFileUrl: string;
+        mimeType: string;
+        fileExtension: string;
+      }>(),
+    );
+
+    getConceptsNeedingAssets
+      .mockResolvedValueOnce([
+        makeReadyConcept("concept-1"),
+        makeReadyConcept("concept-2"),
+        makeReadyConcept("concept-3"),
+        makeReadyConcept("concept-4"),
+        makeReadyConcept("concept-5"),
+      ])
+      .mockResolvedValueOnce([]);
+    tryMarkConceptProcessing.mockResolvedValue(true);
+    generateTrellisModel
+      .mockImplementationOnce(() => deferreds[0]!.promise)
+      .mockImplementationOnce(() => deferreds[1]!.promise)
+      .mockImplementationOnce(() => deferreds[2]!.promise)
+      .mockImplementationOnce(() => deferreds[3]!.promise)
+      .mockImplementationOnce(() => deferreds[4]!.promise);
+    uploadGeneratedAssetToS3.mockResolvedValue({
+      key: "concept-assets/user-1/concept-1/generation-1.glb",
+      url: "https://cdn.example.com/concept-assets/user-1/concept-1/generation-1.glb",
+      mimeType: "model/gltf-binary",
+    });
+
+    const { generateAssetsForPendingConcepts } =
+      await import("@/features/asset-generation/server/asset-generation.server");
+    const batchPromise = generateAssetsForPendingConcepts();
+
+    await vi.waitFor(() => {
+      expect(generateTrellisModel).toHaveBeenCalledTimes(5);
+    });
+
+    deferreds.forEach((deferred) =>
+      deferred.resolve({
+        modelUrl: "https://example.com/model.glb",
+        providerFileUrl: "https://trellis.example.com/model.glb",
+        mimeType: "model/gltf-binary",
+        fileExtension: "glb",
+      }),
+    );
+
+    const result = await batchPromise;
+    expect(result.succeeded).toBe(5);
   });
 });

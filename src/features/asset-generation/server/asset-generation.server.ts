@@ -18,8 +18,22 @@ import type {
   AssetGenerationBatchOptions,
   AssetGenerationBatchResult,
   AssetGenerationConceptRow,
+  AssetGenerationBatchRuntimeOptions,
+  AssetGenerationProgressEvent,
   AssetGenerationResultItem,
 } from "@/features/asset-generation/types";
+
+/**
+ * Fixed concept count selected for each diffusion batch wave.
+ * @description Normal app flows always send at most five concepts to the provider before selecting the next batch.
+ */
+export const FIXED_ASSET_BATCH_SIZE = 5;
+
+/**
+ * Fixed number of in-flight diffusion requests per batch wave.
+ * @description Matches the required five-at-a-time policy so every selected concept in a batch starts together.
+ */
+export const FIXED_ASSET_CONCURRENCY = 5;
 
 export const assetGenerationBatchOptionsSchema = z
   .object({
@@ -39,7 +53,7 @@ export const assetGenerationBatchOptionsSchema = z
 async function mapWithConcurrencyLimit<TInput, TOutput>(
   items: TInput[],
   concurrency: number,
-  worker: (item: TInput) => Promise<TOutput>,
+  worker: (item: TInput, index: number) => Promise<TOutput>,
 ): Promise<PromiseSettledResult<TOutput>[]> {
   const settledResults: PromiseSettledResult<TOutput>[] = new Array(items.length);
   let cursor = 0;
@@ -52,7 +66,7 @@ async function mapWithConcurrencyLimit<TInput, TOutput>(
       try {
         settledResults[currentIndex] = {
           status: "fulfilled",
-          value: await worker(items[currentIndex] as TInput),
+          value: await worker(items[currentIndex] as TInput, currentIndex),
         };
       } catch (error) {
         settledResults[currentIndex] = {
@@ -77,6 +91,9 @@ async function processOneConcept(input: {
   concept: AssetGenerationConceptRow;
   userId: string;
   runId: string;
+  conceptIndex: number;
+  totalConcepts: number;
+  onProgress?: (event: AssetGenerationProgressEvent) => void;
 }): Promise<AssetGenerationResultItem> {
   let prompt: string | undefined;
   let jobId: string | undefined;
@@ -91,13 +108,34 @@ async function processOneConcept(input: {
     });
 
     if (!claimed) {
+      input.onProgress?.({
+        phase: "skipped",
+        conceptId: input.concept.id,
+        conceptName: input.concept.name,
+        conceptIndex: input.conceptIndex,
+        totalConcepts: input.totalConcepts,
+        objectName: input.concept.metaphor?.objectName,
+        prompt,
+      });
+
       return {
         conceptId: input.concept.id,
+        conceptName: input.concept.name,
         status: "skipped",
       };
     }
 
     jobId = crypto.randomUUID();
+    input.onProgress?.({
+      phase: "started",
+      conceptId: input.concept.id,
+      conceptName: input.concept.name,
+      conceptIndex: input.conceptIndex,
+      totalConcepts: input.totalConcepts,
+      objectName: input.concept.metaphor?.objectName,
+      prompt,
+      jobId,
+    });
     const generated = await generateTrellisModel(prompt);
     const uploaded = await uploadGeneratedAssetToS3({
       userId: input.userId,
@@ -121,8 +159,21 @@ async function processOneConcept(input: {
       mimeType: uploaded.mimeType,
     });
 
+    input.onProgress?.({
+      phase: "succeeded",
+      conceptId: input.concept.id,
+      conceptName: input.concept.name,
+      conceptIndex: input.conceptIndex,
+      totalConcepts: input.totalConcepts,
+      objectName: input.concept.metaphor?.objectName,
+      prompt,
+      jobId,
+      assetUrl: uploaded.url,
+    });
+
     return {
       conceptId: input.concept.id,
+      conceptName: input.concept.name,
       status: "succeeded",
       jobId,
       assetUrl: uploaded.url,
@@ -159,17 +210,44 @@ async function processOneConcept(input: {
     } catch (markError) {
       const markMessage =
         markError instanceof Error ? markError.message : "Failed to persist asset failure state.";
+      const combinedError = `${safeError} ${markMessage}`.trim();
+
+      input.onProgress?.({
+        phase: "failed",
+        conceptId: input.concept.id,
+        conceptName: input.concept.name,
+        conceptIndex: input.conceptIndex,
+        totalConcepts: input.totalConcepts,
+        objectName: input.concept.metaphor?.objectName,
+        prompt,
+        jobId,
+        error: combinedError,
+      });
 
       return {
         conceptId: input.concept.id,
+        conceptName: input.concept.name,
         status: "failed",
         jobId,
-        error: `${safeError} ${markMessage}`.trim(),
+        error: combinedError,
       };
     }
 
+    input.onProgress?.({
+      phase: "failed",
+      conceptId: input.concept.id,
+      conceptName: input.concept.name,
+      conceptIndex: input.conceptIndex,
+      totalConcepts: input.totalConcepts,
+      objectName: input.concept.metaphor?.objectName,
+      prompt,
+      jobId,
+      error: safeError,
+    });
+
     return {
       conceptId: input.concept.id,
+      conceptName: input.concept.name,
       status: "failed",
       jobId,
       error: safeError,
@@ -179,59 +257,100 @@ async function processOneConcept(input: {
 
 /**
  * Starts one bounded-concurrency TRELLIS asset generation batch for the current authenticated user.
- * @param options - Optional batch size and concurrency overrides.
+ * @param options - Ignored compatibility options retained so older callers do not break.
  * @returns A JSON-safe summary of selected, claimed, succeeded, failed, and skipped concepts.
  * @remarks
- * - The server function kicks off the batch and waits for completion before returning.
- * - Each concept becomes its own live TRELLIS request with isolated Mongo updates.
- * - Concurrency is capped so third-party app usage stays bounded.
+ * - The server function kicks off repeated fixed-size waves and waits for all of them to finish before returning.
+ * - Each wave selects up to five concepts and launches up to five live TRELLIS requests in parallel.
+ * - Caller-supplied batch tuning is ignored so app behavior stays consistent across manual scripts and frontend calls.
  */
 export async function generateAssetsForPendingConcepts(
   options?: AssetGenerationBatchOptions,
 ): Promise<AssetGenerationBatchResult> {
-  const parsedOptions = assetGenerationBatchOptionsSchema.parse(options);
+  assetGenerationBatchOptionsSchema.parse(options);
   const user = await requireAuthUser();
-  return generateAssetsForPendingConceptsForUser(user.id, parsedOptions);
+  return generateAssetsForPendingConceptsForUser(user.id);
 }
 
 /**
  * Runs the bounded-concurrency asset generation batch for one explicit user id.
  * @param userId - User whose ready-metaphor concepts should be selected from MongoDB.
- * @param options - Optional batch size and concurrency overrides.
+ * @param options - Server-side runtime options; progress callbacks are honored, batch tuning is ignored.
  * @returns A JSON-safe summary of selected, claimed, succeeded, failed, and skipped concepts.
- * @remarks This is exported primarily so local server-side scripts can verify TRELLIS and S3 integration without a browser session.
+ * @remarks
+ * - This loops through all currently ready concepts in repeated five-at-a-time waves.
+ * - Failed or skipped concepts are excluded from reselection during the same run so one bad item cannot trap the batch in a retry loop.
+ * - Exported primarily so local server-side scripts can verify TRELLIS and S3 integration without a browser session.
  */
 export async function generateAssetsForPendingConceptsForUser(
   userId: string,
-  options?: AssetGenerationBatchOptions,
+  options?: AssetGenerationBatchRuntimeOptions,
 ): Promise<AssetGenerationBatchResult> {
-  const parsedOptions = assetGenerationBatchOptionsSchema.parse(options);
-  const batchSize = parsedOptions?.batchSize ?? 10;
-  const concurrency = parsedOptions?.concurrency ?? 3;
-  const candidates = await getConceptsNeedingAssets(userId, batchSize);
+  assetGenerationBatchOptionsSchema.parse(options);
+  const onProgress = options?.onProgress;
   const runId = crypto.randomUUID();
+  const attemptedConceptIds = new Set<string>();
+  const results: AssetGenerationResultItem[] = [];
+  let totalSelected = 0;
 
-  const settled = await mapWithConcurrencyLimit(candidates, concurrency, async (concept) =>
-    processOneConcept({
-      concept,
+  while (true) {
+    const candidates = await getConceptsNeedingAssets(
       userId,
-      runId,
-    }),
-  );
-  const results = settled.map((result, index) => {
-    if (result.status === "fulfilled") {
-      return result.value;
+      FIXED_ASSET_BATCH_SIZE,
+      Array.from(attemptedConceptIds),
+    );
+
+    if (candidates.length === 0) {
+      break;
     }
 
-    return {
-      conceptId: candidates[index]?.id ?? `unknown-${index}`,
-      status: "failed",
-      error: result.reason instanceof Error ? result.reason.message : "Asset generation failed.",
-    } satisfies AssetGenerationResultItem;
-  });
+    totalSelected += candidates.length;
+    candidates.forEach((concept) => attemptedConceptIds.add(concept.id));
+    candidates.forEach((concept, index) => {
+      onProgress?.({
+        phase: "selected",
+        conceptId: concept.id,
+        conceptName: concept.name,
+        conceptIndex: index + 1,
+        totalConcepts: candidates.length,
+        objectName: concept.metaphor?.objectName,
+        prompt: concept.metaphor?.prompt ?? undefined,
+      });
+    });
+
+    const settled = await mapWithConcurrencyLimit(
+      candidates,
+      FIXED_ASSET_CONCURRENCY,
+      async (concept, index) =>
+        processOneConcept({
+          concept,
+          userId,
+          runId,
+          conceptIndex: index + 1,
+          totalConcepts: candidates.length,
+          onProgress,
+        }),
+    );
+
+    results.push(
+      ...settled.map((result, index) => {
+        if (result.status === "fulfilled") {
+          return result.value;
+        }
+
+        return {
+          conceptId: candidates[index]?.id ?? `unknown-${index}`,
+          conceptName: candidates[index]?.name,
+          status: "failed",
+          error:
+            result.reason instanceof Error ? result.reason.message : "Asset generation failed.",
+        } satisfies AssetGenerationResultItem;
+      }),
+    );
+  }
 
   return {
-    totalSelected: candidates.length,
+    totalSelected,
     totalClaimed: results.filter((result) => result.status !== "skipped").length,
     succeeded: results.filter((result) => result.status === "succeeded").length,
     failed: results.filter((result) => result.status === "failed").length,

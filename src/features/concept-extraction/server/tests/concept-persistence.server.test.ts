@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const requireAuthUser = vi.fn();
-const classifyConceptRoomsWithGemini = vi.fn();
 const createConceptForUser = vi.fn();
 const createRoomForUser = vi.fn();
 const incrementRoomConceptCount = vi.fn();
+const incrementRoomConceptCountBySlug = vi.fn();
 const listRoomsByUserId = vi.fn();
 const endSession = vi.fn();
 const withTransaction = vi.fn(async (callback: () => Promise<void>) => callback());
@@ -14,10 +14,6 @@ vi.mock("@/features/auth/server/auth-session.server", () => ({
   requireAuthUser,
 }));
 
-vi.mock("@/features/concept-extraction/server/gemini-room-classifier.server", () => ({
-  classifyConceptRoomsWithGemini,
-}));
-
 vi.mock("@/features/concept-extraction/server/concept.repository.server", () => ({
   createConceptForUser,
 }));
@@ -25,6 +21,7 @@ vi.mock("@/features/concept-extraction/server/concept.repository.server", () => 
 vi.mock("@/features/concept-extraction/server/room.repository.server", () => ({
   createRoomForUser,
   incrementRoomConceptCount,
+  incrementRoomConceptCountBySlug,
   listRoomsByUserId,
 }));
 
@@ -41,33 +38,40 @@ describe("persistConceptsForCurrentUser", () => {
     incrementRoomConceptCount.mockImplementation(async (roomId: string, by = 1) => ({
       id: roomId,
       userId: "user-1",
-      name: roomId === "room-1" ? "Science" : "Biology",
-      slug: roomId === "room-1" ? "science" : "biology",
-      description: roomId === "room-1" ? "STEM concepts" : "Living systems",
+      name: "Imported Concepts",
+      slug: "imported-concepts",
+      description: "Temporary catch-all room used while automatic room classification is disabled.",
       conceptCount: by,
       createdAt: "2026-03-28T12:00:00.000Z",
       updatedAt: "2026-03-28T13:00:00.000Z",
     }));
+    incrementRoomConceptCountBySlug.mockImplementation(
+      async (_userId: string, slug: string, by = 1) => ({
+        id: "room-imported",
+        userId: "user-1",
+        name: "Imported Concepts",
+        slug,
+        description:
+          "Temporary catch-all room used while automatic room classification is disabled.",
+        conceptCount: by,
+        createdAt: "2026-03-28T12:00:00.000Z",
+        updatedAt: "2026-03-28T13:00:00.000Z",
+      }),
+    );
   });
 
-  it("assigns a concept to an existing room and increments room counts", async () => {
+  it("reuses the fallback room when it already exists", async () => {
     listRoomsByUserId.mockResolvedValue([
       {
-        id: "room-1",
+        id: "room-imported",
         userId: "user-1",
-        name: "Science",
-        slug: "science",
-        description: "STEM concepts",
+        name: "Imported Concepts",
+        slug: "imported-concepts",
+        description:
+          "Temporary catch-all room used while automatic room classification is disabled.",
         conceptCount: 2,
         createdAt: "2026-03-28T12:00:00.000Z",
         updatedAt: "2026-03-28T12:00:00.000Z",
-      },
-    ]);
-    classifyConceptRoomsWithGemini.mockResolvedValue([
-      {
-        conceptName: "Neuron",
-        decisionType: "existing",
-        roomSlug: "science",
       },
     ]);
     createConceptForUser.mockResolvedValue({
@@ -76,7 +80,7 @@ describe("persistConceptsForCurrentUser", () => {
       name: "Neuron",
       description: "Cell that transmits signals.",
       normalizedName: "neuron",
-      room: { roomId: "room-1", name: "Science", slug: "science" },
+      room: { roomId: "room-imported", name: "Imported Concepts", slug: "imported-concepts" },
       metaphor: null,
       embedding: null,
       asset: null,
@@ -91,37 +95,26 @@ describe("persistConceptsForCurrentUser", () => {
       concepts: [{ name: "Neuron", description: "Cell that transmits signals." }],
     });
 
-    expect(classifyConceptRoomsWithGemini).toHaveBeenCalledOnce();
     expect(createRoomForUser).not.toHaveBeenCalled();
     expect(createConceptForUser).toHaveBeenCalledWith(
       expect.objectContaining({
         normalizedName: "neuron",
-        room: { roomId: "room-1", name: "Science", slug: "science" },
+        room: { roomId: "room-imported", name: "Imported Concepts", slug: "imported-concepts" },
       }),
       expect.any(Object),
     );
-    expect(incrementRoomConceptCount).toHaveBeenCalledWith("room-1", 1, expect.any(Object));
-    expect(result.concepts).toHaveLength(1);
-    expect(result.concepts[0]?.metaphor).toBeNull();
-    expect(result.rooms[0]?.slug).toBe("science");
+    expect(incrementRoomConceptCount).toHaveBeenCalledWith("room-imported", 1, expect.any(Object));
+    expect(result.rooms[0]?.slug).toBe("imported-concepts");
   });
 
-  it("creates a new room when Gemini returns a new-room decision", async () => {
+  it("creates the fallback room when the user does not have it yet", async () => {
     listRoomsByUserId.mockResolvedValue([]);
-    classifyConceptRoomsWithGemini.mockResolvedValue([
-      {
-        conceptName: "Neuron",
-        decisionType: "new",
-        roomName: "Biology",
-        roomDescription: "Living systems",
-      },
-    ]);
     createRoomForUser.mockResolvedValue({
-      id: "room-2",
+      id: "room-imported",
       userId: "user-1",
-      name: "Biology",
-      slug: "biology",
-      description: "Living systems",
+      name: "Imported Concepts",
+      slug: "imported-concepts",
+      description: "Temporary catch-all room used while automatic room classification is disabled.",
       conceptCount: 0,
       createdAt: "2026-03-28T12:00:00.000Z",
       updatedAt: "2026-03-28T12:00:00.000Z",
@@ -129,64 +122,10 @@ describe("persistConceptsForCurrentUser", () => {
     createConceptForUser.mockResolvedValue({
       id: "concept-1",
       userId: "user-1",
-      name: "Neuron",
-      description: "Cell that transmits signals.",
-      normalizedName: "neuron",
-      room: { roomId: "room-2", name: "Biology", slug: "biology" },
-      metaphor: null,
-      embedding: null,
-      asset: null,
-      createdAt: "2026-03-28T13:00:00.000Z",
-      updatedAt: "2026-03-28T13:00:00.000Z",
-    });
-
-    const { persistConceptsForCurrentUser } =
-      await import("@/features/concept-extraction/server/concept-persistence.server");
-
-    const result = await persistConceptsForCurrentUser({
-      concepts: [{ name: "Neuron", description: "Cell that transmits signals." }],
-    });
-
-    expect(createRoomForUser).toHaveBeenCalledWith(
-      {
-        userId: "user-1",
-        name: "Biology",
-        slug: "biology",
-        description: "Living systems",
-      },
-      expect.any(Object),
-    );
-    expect(result.rooms.some((room) => room.slug === "biology")).toBe(true);
-  });
-
-  it("reuses an existing room when a new-room decision slug-collides", async () => {
-    listRoomsByUserId.mockResolvedValue([
-      {
-        id: "room-1",
-        userId: "user-1",
-        name: "Science",
-        slug: "science",
-        description: "STEM concepts",
-        conceptCount: 2,
-        createdAt: "2026-03-28T12:00:00.000Z",
-        updatedAt: "2026-03-28T12:00:00.000Z",
-      },
-    ]);
-    classifyConceptRoomsWithGemini.mockResolvedValue([
-      {
-        conceptName: "Atom",
-        decisionType: "new",
-        roomName: "Science",
-        roomDescription: "Should reuse existing",
-      },
-    ]);
-    createConceptForUser.mockResolvedValue({
-      id: "concept-1",
-      userId: "user-1",
       name: "Atom",
       description: "Basic unit of matter.",
       normalizedName: "atom",
-      room: { roomId: "room-1", name: "Science", slug: "science" },
+      room: { roomId: "room-imported", name: "Imported Concepts", slug: "imported-concepts" },
       metaphor: null,
       embedding: null,
       asset: null,
@@ -201,25 +140,64 @@ describe("persistConceptsForCurrentUser", () => {
       concepts: [{ name: "Atom", description: "Basic unit of matter." }],
     });
 
-    expect(createRoomForUser).not.toHaveBeenCalled();
-    expect(createConceptForUser).toHaveBeenCalledWith(
-      expect.objectContaining({
-        room: { roomId: "room-1", name: "Science", slug: "science" },
-      }),
+    expect(createRoomForUser).toHaveBeenCalledWith(
+      {
+        userId: "user-1",
+        name: "Imported Concepts",
+        slug: "imported-concepts",
+        description:
+          "Temporary catch-all room used while automatic room classification is disabled.",
+      },
       expect.any(Object),
     );
   });
 
-  it("fails closed for anonymous requests", async () => {
-    requireAuthUser.mockRejectedValue(new Error("Unauthorized"));
+  it("still normalizes punctuation-heavy concept names before persistence", async () => {
+    listRoomsByUserId.mockResolvedValue([
+      {
+        id: "room-imported",
+        userId: "user-1",
+        name: "Imported Concepts",
+        slug: "imported-concepts",
+        description:
+          "Temporary catch-all room used while automatic room classification is disabled.",
+        conceptCount: 2,
+        createdAt: "2026-03-28T12:00:00.000Z",
+        updatedAt: "2026-03-28T12:00:00.000Z",
+      },
+    ]);
+    createConceptForUser.mockResolvedValue({
+      id: "concept-1",
+      userId: "user-1",
+      name: "Non‑Negative Integer Solutions to Equations",
+      description: "Counting non-negative integer assignments.",
+      normalizedName: "non negative integer solutions to equations",
+      room: { roomId: "room-imported", name: "Imported Concepts", slug: "imported-concepts" },
+      metaphor: null,
+      embedding: null,
+      asset: null,
+      createdAt: "2026-03-28T13:00:00.000Z",
+      updatedAt: "2026-03-28T13:00:00.000Z",
+    });
 
     const { persistConceptsForCurrentUser } =
       await import("@/features/concept-extraction/server/concept-persistence.server");
 
-    await expect(
-      persistConceptsForCurrentUser({
-        concepts: [{ name: "Neuron", description: "Cell that transmits signals." }],
+    await persistConceptsForCurrentUser({
+      concepts: [
+        {
+          name: "Non‑Negative Integer Solutions to Equations",
+          description: "Counting non-negative integer assignments.",
+        },
+      ],
+    });
+
+    expect(createConceptForUser).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "Non‑Negative Integer Solutions to Equations",
+        normalizedName: "non negative integer solutions to equations",
       }),
-    ).rejects.toThrow("Unauthorized");
+      expect.any(Object),
+    );
   });
 });

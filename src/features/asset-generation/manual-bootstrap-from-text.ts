@@ -7,6 +7,7 @@ import { generateAssetsForPendingConceptsForUser } from "@/features/asset-genera
 import { extractConceptsFromSource } from "@/features/concept-extraction/server/concept-extraction.server";
 import { generateConceptMetaphorsForUser } from "@/features/concept-extraction/server/concept-metaphor.server";
 import { persistConceptsForUser } from "@/features/concept-extraction/server/concept-persistence.server";
+import type { AssetGenerationProgressEvent } from "@/features/asset-generation/types";
 
 function printMetaphorTable(
   concepts: Array<{
@@ -28,16 +29,54 @@ function printMetaphorTable(
   );
 }
 
+/**
+ * Prints one concise progress line for the local asset-generation batch.
+ * @param event - Current batch progress event emitted by the server batch runner.
+ * @returns Nothing.
+ * @remarks The manual script runs without a UI, so streaming progress prevents long TRELLIS requests from looking like a frozen process.
+ */
+function printAssetProgress(event: AssetGenerationProgressEvent) {
+  const timestamp = new Date().toISOString();
+  const prefix = `[${event.conceptIndex}/${event.totalConcepts}] ${event.conceptName}`;
+  const jobSuffix = event.jobId ? ` | jobId=${event.jobId}` : "";
+  const objectSuffix = event.objectName ? ` | object=${event.objectName}` : "";
+  const promptSuffix = event.prompt ? ` | prompt=${event.prompt}` : "";
+
+  if (event.phase === "selected") {
+    console.log(`${timestamp} ${prefix} | selected${jobSuffix}${objectSuffix}${promptSuffix}`);
+    return;
+  }
+
+  if (event.phase === "started") {
+    console.log(`${timestamp} ${prefix} | generating${jobSuffix}${objectSuffix}${promptSuffix}`);
+    return;
+  }
+
+  if (event.phase === "succeeded") {
+    console.log(
+      `${timestamp} ${prefix} | succeeded${jobSuffix} | assetUrl=${event.assetUrl ?? ""}`,
+    );
+    return;
+  }
+
+  if (event.phase === "skipped") {
+    console.log(`${timestamp} ${prefix} | skipped${jobSuffix}`);
+    return;
+  }
+
+  console.log(
+    `${timestamp} ${prefix} | failed${jobSuffix} | error=${event.error ?? "Unknown error."}`,
+  );
+}
+
 async function main() {
   try {
     // ===== REPLACE THESE WITH YOUR INPUTS =====
-    const userId = "mitochondria-one-concept-user";
+    const userId = "balls-bins-all-concepts-user";
     const shouldGenerateAssets = true;
     const studyText = `
-      Mitochondria are organelles that generate most of a cell's ATP, the molecule used to store
-      and transfer energy. During cellular respiration, nutrients are broken down and electrons
-      move through the electron transport chain in the inner mitochondrial membrane. The energy
-      released by this process powers ATP synthase, an enzyme that produces ATP.
+      Mitochondria are organelles that generate ATP for the cell. The electron transport chain releases energy that helps power ATP synthase. ATP synthase then produces ATP, which cells use as an energy source.
+
     `;
 
     const extractedConcepts = await extractConceptsFromSource({
@@ -45,7 +84,7 @@ async function main() {
       content: studyText,
     });
 
-    const selectedConcepts = extractedConcepts.slice(0, 1);
+    const selectedConcepts = extractedConcepts;
 
     console.log("Extracted concepts:", extractedConcepts.length);
     console.log("Selected concepts for pipeline:", selectedConcepts);
@@ -90,8 +129,7 @@ async function main() {
     }
 
     const assets = await generateAssetsForPendingConceptsForUser(userId, {
-      batchSize: persisted.concepts.length,
-      concurrency: 1,
+      onProgress: printAssetProgress,
     });
 
     console.log("Asset batch summary:", assets);

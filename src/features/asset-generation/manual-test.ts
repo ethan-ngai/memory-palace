@@ -1,6 +1,6 @@
 /**
  * @file manual-test.ts
- * @description Manual server-side TRELLIS batch runner for one user.
+ * @description Manual server-side TRELLIS batch runner for one user using the fixed five-at-a-time policy.
  * @module asset-generation
  */
 import { generateAssetsForPendingConceptsForUser } from "@/features/asset-generation/server/asset-generation.server";
@@ -21,11 +21,7 @@ async function main() {
     // Use the local application user id that owns the concepts in MongoDB.
     const userId = "local-dev-user";
 
-    // Start with batchSize 1 so you only submit one TRELLIS request while verifying the pipeline.
-    const result = await generateAssetsForPendingConceptsForUser(userId, {
-      batchSize: 1,
-      concurrency: 1,
-    });
+    const result = await generateAssetsForPendingConceptsForUser(userId);
 
     printSummary(result);
     console.log(JSON.stringify(result, null, 2));

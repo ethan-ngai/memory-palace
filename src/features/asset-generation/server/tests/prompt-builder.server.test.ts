@@ -21,7 +21,7 @@ describe("buildAssetGenerationPrompt", () => {
       asset: null,
     });
 
-    expect(prompt).toBe("a neuron lantern, isolated single object, white background");
+    expect(prompt).toBe("a neuron lantern, isolated single object");
     expect(prompt).toContain(SHARED_STYLE_BLOCK);
   });
 

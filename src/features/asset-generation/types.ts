@@ -24,6 +24,7 @@ export type AssetGenerationConceptRow = {
  */
 export type AssetGenerationResultItem = {
   conceptId: string;
+  conceptName?: string;
   status: "succeeded" | "failed" | "skipped";
   jobId?: string;
   assetUrl?: string;
@@ -38,6 +39,31 @@ export type AssetGenerationResultItem = {
 export type AssetGenerationBatchOptions = {
   batchSize?: number;
   concurrency?: number;
+};
+
+/**
+ * Progress event emitted during one local asset generation batch.
+ * @description Gives manual scripts enough context to show which concept, metaphor object, and prompt are currently in flight.
+ */
+export type AssetGenerationProgressEvent = {
+  phase: "selected" | "started" | "succeeded" | "failed" | "skipped";
+  conceptId: string;
+  conceptName: string;
+  conceptIndex: number;
+  totalConcepts: number;
+  objectName?: string;
+  prompt?: string;
+  assetUrl?: string;
+  jobId?: string;
+  error?: string;
+};
+
+/**
+ * Server-side-only batch options used by local scripts.
+ * @description Extends the public batch knobs with a progress callback that should never cross the JSON server-function boundary.
+ */
+export type AssetGenerationBatchRuntimeOptions = AssetGenerationBatchOptions & {
+  onProgress?: (event: AssetGenerationProgressEvent) => void;
 };
 
 /**

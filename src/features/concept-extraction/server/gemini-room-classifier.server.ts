@@ -19,6 +19,7 @@ export type GeminiRoomDecision =
       decisionType: "existing";
       roomId?: string;
       roomSlug?: string;
+      roomName?: string;
     }
   | {
       conceptName: string;
@@ -32,6 +33,7 @@ const geminiExistingDecisionSchema = z.object({
   decisionType: z.literal("existing"),
   roomId: z.string().min(1).optional(),
   roomSlug: z.string().min(1).optional(),
+  roomName: z.string().min(1).optional(),
 });
 
 const geminiNewDecisionSchema = z.object({
@@ -72,7 +74,7 @@ function buildPrompt(input: {
     input.prompt.trim(),
     "",
     "Return JSON only with this shape:",
-    '{ "assignments": [{ "conceptName": "...", "decisionType": "existing", "roomId": "...", "roomSlug": "..." } | { "conceptName": "...", "decisionType": "new", "roomName": "...", "roomDescription": "..." }] }',
+    '{ "assignments": [{ "conceptName": "...", "decisionType": "existing", "roomId": "...", "roomSlug": "...", "roomName": "..." } | { "conceptName": "...", "decisionType": "new", "roomName": "...", "roomDescription": "..." }] }',
     "",
     "Existing rooms:",
     JSON.stringify(input.existingRooms, null, 2),

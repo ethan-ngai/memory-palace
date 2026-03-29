@@ -28,7 +28,7 @@ const commonServerEnvSchema = z.object({
   GEMINI_API_KEY: z.string().optional(),
   GEMINI_MODEL: z.string().optional().default("gemini-2.5-flash"),
   TRELLIS_GRADIO_URL: z.string().url().optional().default("https://081e1666f232d47fcb.gradio.live"),
-  TRELLIS_REQUEST_TIMEOUT_MINUTES: positiveIntegerEnvSchema.optional().default(30),
+  TRELLIS_REQUEST_TIMEOUT_MINUTES: positiveIntegerEnvSchema.optional().default(3),
   ASSET_S3_ENDPOINT: z.string().url().optional(),
   ASSET_S3_REGION: z.string().optional(),
   ASSET_S3_BUCKET: z.string().optional(),

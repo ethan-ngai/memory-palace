@@ -7,7 +7,6 @@ import { z } from "zod";
 import { getMongoClient } from "@/lib/server/mongodb.server";
 import { requireAuthUser } from "@/features/auth/server/auth-session.server";
 import { conceptMetaphorSchema } from "@/features/concept-extraction/server/concept-metaphor.server";
-import { classifyConceptRoomsWithGemini } from "@/features/concept-extraction/server/gemini-room-classifier.server";
 import { createConceptForUser } from "@/features/concept-extraction/server/concept.repository.server";
 import {
   createRoomForUser,
@@ -16,27 +15,14 @@ import {
   listRoomsByUserId,
 } from "@/features/concept-extraction/server/room.repository.server";
 import type {
-  ExtractedConcept,
   PersistConceptsInput,
   PersistConceptsResult,
   RoomSummary,
 } from "@/features/concept-extraction/types";
 
-/**
- * Developer-editable prompt template used for room classification.
- * @description Lives in server code on purpose so developers can tune categorization behavior without introducing a user-facing settings surface yet.
- */
-export const ROOM_CLASSIFICATION_PROMPT = `
-You classify memory-palace concepts into user-owned rooms.
-
-Rules:
-- Prefer an existing room when the concept clearly belongs there.
-- Create a new room only when no existing room is a strong fit.
-- Keep new room names broad enough to group future related concepts.
-- Avoid near-duplicate room names.
-- Return exactly one assignment per concept.
-- Return strict JSON only.
-`;
+const FALLBACK_ROOM_NAME = "Imported Concepts";
+const FALLBACK_ROOM_DESCRIPTION =
+  "Temporary catch-all room used while automatic room classification is disabled.";
 
 export const extractedConceptSchema = z.object({
   name: z.string().trim().min(1),
@@ -101,25 +87,6 @@ export const persistConceptsInputSchema = z.object({
   concepts: z.array(extractedConceptSchema).min(1),
 });
 
-const geminiExistingAssignmentSchema = z.object({
-  conceptName: z.string().min(1),
-  decisionType: z.literal("existing"),
-  roomId: z.string().min(1).optional(),
-  roomSlug: z.string().min(1).optional(),
-});
-
-const geminiNewAssignmentSchema = z.object({
-  conceptName: z.string().min(1),
-  decisionType: z.literal("new"),
-  roomName: z.string().min(1),
-  roomDescription: z.string().min(1).optional(),
-});
-
-export const geminiRoomAssignmentSchema = z.discriminatedUnion("decisionType", [
-  geminiExistingAssignmentSchema,
-  geminiNewAssignmentSchema,
-]);
-
 /**
  * Normalizes room names into stable user-scoped slugs.
  * @param value - Raw room name proposed by Gemini or stored in the database.
@@ -143,70 +110,44 @@ export function slugifyRoomName(value: string) {
  * @remarks Uses a conservative normalization strategy so display names stay intact while storage keys stay comparable.
  */
 export function normalizeConceptName(value: string) {
-  return value.trim().toLowerCase().replace(/\s+/g, " ");
+  return value
+    .normalize("NFKC")
+    .replace(/[\u2010-\u2015\u2212]/gu, "-")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ");
 }
 
 /**
- * Resolves an existing room reference from Gemini output.
- * @param assignment - Existing-room assignment emitted by Gemini.
- * @param roomsById - Current user rooms keyed by id for direct roomId matching.
- * @param roomsBySlug - Current user rooms keyed by slug for slug-based matching.
- * @returns The matched room summary owned by the current user.
- * @remarks Fails closed when Gemini references a room that does not exist for the current user.
+ * Resolves the deterministic fallback room used when automatic room classification is disabled.
+ * @param userId - Local application user id that owns the room.
+ * @param existingRooms - Current user rooms loaded before the write transaction begins.
+ * @param session - MongoDB session shared with concept writes.
+ * @returns The reused or newly created fallback room summary.
+ * @remarks This preserves the room column in stored concepts without depending on Gemini availability.
  */
-function resolveExistingRoom(
-  assignment: z.infer<typeof geminiExistingAssignmentSchema>,
-  roomsById: Map<string, RoomSummary>,
-  roomsBySlug: Map<string, RoomSummary>,
+async function resolveFallbackRoom(
+  userId: string,
+  existingRooms: RoomSummary[],
+  session: Parameters<typeof createRoomForUser>[1],
 ) {
-  if (assignment.roomId) {
-    const room = roomsById.get(assignment.roomId);
+  const fallbackSlug = slugifyRoomName(FALLBACK_ROOM_NAME);
+  const existingRoom = existingRooms.find((room) => room.slug === fallbackSlug);
 
-    if (room) {
-      return room;
-    }
+  if (existingRoom) {
+    return existingRoom;
   }
 
-  if (assignment.roomSlug) {
-    const room = roomsBySlug.get(assignment.roomSlug);
-
-    if (room) {
-      return room;
-    }
-  }
-
-  throw new Error(`Gemini referenced an unknown room for concept "${assignment.conceptName}".`);
-}
-
-/**
- * Validates Gemini output shape and concept coverage.
- * @param concepts - Input concepts being persisted in the current request.
- * @param assignments - Raw assignments returned by the Gemini classifier.
- * @returns Parsed assignments guaranteed to cover the input array one-for-one.
- * @remarks The workflow rejects duplicate or missing concept coverage before any database write begins.
- */
-function validateAssignments(concepts: ExtractedConcept[], assignments: unknown[]) {
-  if (assignments.length !== concepts.length) {
-    throw new Error("Gemini returned the wrong number of room assignments.");
-  }
-
-  const conceptNames = new Set(concepts.map((concept) => concept.name));
-  const seen = new Set<string>();
-
-  return assignments.map((assignment) => {
-    const parsed = geminiRoomAssignmentSchema.parse(assignment);
-
-    if (!conceptNames.has(parsed.conceptName)) {
-      throw new Error(`Gemini returned an unknown concept name "${parsed.conceptName}".`);
-    }
-
-    if (seen.has(parsed.conceptName)) {
-      throw new Error(`Gemini returned a duplicate assignment for "${parsed.conceptName}".`);
-    }
-
-    seen.add(parsed.conceptName);
-    return parsed;
-  });
+  return createRoomForUser(
+    {
+      userId,
+      name: FALLBACK_ROOM_NAME,
+      slug: fallbackSlug,
+      description: FALLBACK_ROOM_DESCRIPTION,
+    },
+    session,
+  );
 }
 
 /**
@@ -238,18 +179,8 @@ export async function persistConceptsForUser(
 ): Promise<PersistConceptsResult> {
   const parsedInput = persistConceptsInputSchema.parse(input);
   const existingRooms = await listRoomsByUserId(userId);
-  const assignments = validateAssignments(
-    parsedInput.concepts,
-    await classifyConceptRoomsWithGemini({
-      concepts: parsedInput.concepts,
-      existingRooms,
-      prompt: ROOM_CLASSIFICATION_PROMPT,
-    }),
-  );
-
   const roomsById = new Map(existingRooms.map((room) => [room.id, room]));
   const roomsBySlug = new Map(existingRooms.map((room) => [room.slug, room]));
-  const conceptRoomIds = new Map<string, string>();
   const client = await getMongoClient();
   const session = client.startSession();
 
@@ -257,43 +188,13 @@ export async function persistConceptsForUser(
     const concepts: PersistConceptsResult["concepts"] = [];
 
     await session.withTransaction(async () => {
-      for (const assignment of assignments) {
-        if (assignment.decisionType === "existing") {
-          const room = resolveExistingRoom(assignment, roomsById, roomsBySlug);
-          conceptRoomIds.set(assignment.conceptName, room.id);
-          continue;
-        }
-
-        const slug = slugifyRoomName(assignment.roomName);
-        let room = roomsBySlug.get(slug);
-
-        if (!room) {
-          room = await createRoomForUser(
-            {
-              userId,
-              name: assignment.roomName.trim(),
-              slug,
-              description: assignment.roomDescription?.trim() || "",
-            },
-            session,
-          );
-          roomsById.set(room.id, room);
-          roomsBySlug.set(room.slug, room);
-        }
-
-        conceptRoomIds.set(assignment.conceptName, room.id);
-      }
+      const fallbackRoom = await resolveFallbackRoom(userId, existingRooms, session);
+      roomsById.set(fallbackRoom.id, fallbackRoom);
+      roomsBySlug.set(fallbackRoom.slug, fallbackRoom);
 
       const roomCounts = new Map<string, number>();
 
       for (const concept of parsedInput.concepts) {
-        const roomId = conceptRoomIds.get(concept.name);
-        const room = roomId ? roomsById.get(roomId) : null;
-
-        if (!room) {
-          throw new Error(`No room was resolved for concept "${concept.name}".`);
-        }
-
         const storedConcept = await createConceptForUser(
           {
             userId,
@@ -301,9 +202,9 @@ export async function persistConceptsForUser(
             description: concept.description.trim(),
             normalizedName: normalizeConceptName(concept.name),
             room: {
-              roomId: room.id,
-              name: room.name,
-              slug: room.slug,
+              roomId: fallbackRoom.id,
+              name: fallbackRoom.name,
+              slug: fallbackRoom.slug,
             },
             metaphor: null,
             embedding: null,
@@ -313,7 +214,7 @@ export async function persistConceptsForUser(
         );
 
         concepts.push(storedConceptSchema.parse(storedConcept));
-        roomCounts.set(room.id, (roomCounts.get(room.id) || 0) + 1);
+        roomCounts.set(fallbackRoom.id, (roomCounts.get(fallbackRoom.id) || 0) + 1);
       }
 
       for (const [roomId, count] of roomCounts) {
