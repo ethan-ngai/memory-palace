@@ -10,7 +10,6 @@ Loci is a study-to-spatial-memory app. It turns imported study material into con
 - Calls a 3D generation pipeline to create GLB assets
 - Loads a room scan plus room anchors in a Three.js viewer
 - Places generated objects into the room and lets the user inspect what each object represents
--
 
 ## Tech Stack
 
