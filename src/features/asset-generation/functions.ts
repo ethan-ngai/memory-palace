@@ -10,15 +10,14 @@ import {
 } from "@/features/asset-generation/server/asset-generation.server";
 
 /**
- * Starts a bounded-concurrency Hunyuan batch for the current authenticated user.
+ * Starts a bounded-concurrency TRELLIS batch for the current authenticated user.
  *
  * Example:
  * `await startAssetGeneration({ data: { batchSize: 10, concurrency: 3 } })`
  *
  * Environment:
- * `HUNYUAN_API_KEY=...`
- * `HUNYUAN_API_BASE_URL=https://api.example-hunyuan.com/v1`
- * `HUNYUAN_MODEL=hunyuan-3d`
+ * `TRELLIS_GRADIO_URL=https://081e1666f232d47fcb.gradio.live`
+ * `TRELLIS_REQUEST_TIMEOUT_MINUTES=30`
  * `ASSET_S3_ENDPOINT=https://s3.amazonaws.com`
  * `ASSET_S3_REGION=us-east-1`
  * `ASSET_S3_BUCKET=memory-palace-assets`

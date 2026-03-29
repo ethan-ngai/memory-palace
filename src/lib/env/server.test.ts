@@ -15,10 +15,6 @@ describe("parseServerEnv", () => {
         GEMINI_API_BASE_URL: "https://generativelanguage.googleapis.com/v1beta",
         GEMINI_API_KEY: "",
         GEMINI_MODEL: "gemini-2.5-flash",
-        HUNYUAN_API_ENDPOINT: "hunyuan.intl.tencentcloudapi.com",
-        HUNYUAN_API_REGION: "ap-singapore",
-        HUNYUAN_API_VERSION: "2023-09-01",
-        HUNYUAN_MODEL: "3.0",
         K2_API_BASE_URL: "https://api.k2.example/v1",
         K2_API_KEY: "",
         K2_MODEL: "",
@@ -28,9 +24,35 @@ describe("parseServerEnv", () => {
         OPENAI_COMPATIBLE_API_KEY: "unused",
         OPENAI_COMPATIBLE_MODEL: "unused",
         SESSION_COOKIE_SECRET: "",
-        TENCENTCLOUD_SECRET_ID: "",
-        TENCENTCLOUD_SECRET_KEY: "",
       }),
     ).toThrow();
+  });
+
+  it("does not require extra provider secrets for the default live TRELLIS path", () => {
+    expect(() =>
+      parseServerEnv({
+        AI_PROVIDER: "gemini",
+        APP_BASE_URL: "http://localhost:3000",
+        AUTH0_AUDIENCE: "",
+        AUTH0_CLIENT_ID: "client-id",
+        AUTH0_CLIENT_SECRET: "client-secret",
+        AUTH0_DOMAIN: "example.auth0.com",
+        ASSET_S3_ACCESS_KEY_ID: "access-key",
+        ASSET_S3_BUCKET: "bucket",
+        ASSET_S3_ENDPOINT: "https://s3.example.com",
+        ASSET_S3_PUBLIC_BASE_URL: "https://cdn.example.com",
+        ASSET_S3_REGION: "us-east-1",
+        ASSET_S3_SECRET_ACCESS_KEY: "secret-key",
+        GEMINI_API_BASE_URL: "https://generativelanguage.googleapis.com/v1beta",
+        GEMINI_API_KEY: "gemini-key",
+        GEMINI_MODEL: "gemini-2.5-flash",
+        MONGODB_DB_NAME: "memory-palace",
+        MONGODB_URI: "mongodb://localhost:27017",
+        OPENAI_COMPATIBLE_API_BASE_URL: "https://example.com/v1",
+        OPENAI_COMPATIBLE_API_KEY: "unused",
+        OPENAI_COMPATIBLE_MODEL: "unused",
+        SESSION_COOKIE_SECRET: "x".repeat(32),
+      }),
+    ).not.toThrow();
   });
 });

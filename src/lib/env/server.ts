@@ -8,6 +8,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 
+const positiveIntegerEnvSchema = z.coerce.number().int().positive();
+
 const commonServerEnvSchema = z.object({
   AUTH0_DOMAIN: z.string().min(1),
   AUTH0_CLIENT_ID: z.string().min(1),
@@ -25,12 +27,8 @@ const commonServerEnvSchema = z.object({
     .default("https://generativelanguage.googleapis.com/v1beta"),
   GEMINI_API_KEY: z.string().optional(),
   GEMINI_MODEL: z.string().optional().default("gemini-2.5-flash"),
-  TENCENTCLOUD_SECRET_ID: z.string().optional(),
-  TENCENTCLOUD_SECRET_KEY: z.string().optional(),
-  HUNYUAN_API_ENDPOINT: z.string().min(1).default("hunyuan.intl.tencentcloudapi.com"),
-  HUNYUAN_API_REGION: z.string().min(1).default("ap-singapore"),
-  HUNYUAN_API_VERSION: z.string().min(1).default("2023-09-01"),
-  HUNYUAN_MODEL: z.string().min(1).default("3.0"),
+  TRELLIS_GRADIO_URL: z.string().url().optional().default("https://081e1666f232d47fcb.gradio.live"),
+  TRELLIS_REQUEST_TIMEOUT_MINUTES: positiveIntegerEnvSchema.optional().default(30),
   ASSET_S3_ENDPOINT: z.string().url().optional(),
   ASSET_S3_REGION: z.string().optional(),
   ASSET_S3_BUCKET: z.string().optional(),
@@ -162,19 +160,15 @@ function readEnvFile(filePath: string) {
 
 /**
  * Resolves repo-local env file values for server-only scripts and tests.
- * @returns Env pairs loaded from `.env`, falling back to `.env.example` when needed.
+ * @returns Env pairs loaded from `.env` when present.
  * @remarks Process env still wins so deployed environments and shell exports override local files.
  */
 function getEnvFileFallbacks() {
   const currentDir = path.dirname(fileURLToPath(import.meta.url));
   const repoRoot = path.resolve(currentDir, "../../..");
-  const envExample = readEnvFile(path.join(repoRoot, ".env.example"));
   const envFile = readEnvFile(path.join(repoRoot, ".env"));
 
-  return {
-    ...envExample,
-    ...envFile,
-  };
+  return envFile;
 }
 
 /**

@@ -34,18 +34,12 @@ describe("uploadGeneratedAssetToS3", () => {
       GEMINI_API_BASE_URL: "https://generativelanguage.googleapis.com/v1beta",
       GEMINI_API_KEY: "gemini-key",
       GEMINI_MODEL: "gemini-2.5-flash",
-      HUNYUAN_API_ENDPOINT: "hunyuan.intl.tencentcloudapi.com",
-      HUNYUAN_API_REGION: "ap-singapore",
-      HUNYUAN_API_VERSION: "2023-09-01",
-      HUNYUAN_MODEL: "3.0",
       MONGODB_DB_NAME: "memory-palace",
       MONGODB_URI: "mongodb://localhost:27017",
       OPENAI_COMPATIBLE_API_BASE_URL: "https://example.com/v1",
       OPENAI_COMPATIBLE_API_KEY: "unused",
       OPENAI_COMPATIBLE_MODEL: "unused",
       SESSION_COOKIE_SECRET: "x".repeat(32),
-      TENCENTCLOUD_SECRET_ID: "secret-id",
-      TENCENTCLOUD_SECRET_KEY: "secret-key",
     };
     send.mockReset().mockResolvedValue({});
     S3Client.mockClear();

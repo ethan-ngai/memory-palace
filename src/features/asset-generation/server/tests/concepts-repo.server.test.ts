@@ -130,10 +130,10 @@ describe("asset generation concepts repo", () => {
         asset: {
           status: "ready",
           provider: "s3",
-          source: "hunyuan",
+          source: "trellis",
           key: "concept-assets/user-1/atom.glb",
           url: "https://cdn.example.com/concept-assets/user-1/atom.glb",
-          styleVersion: "low-poly-v1",
+          styleVersion: "standard-3d-v2",
           updatedAt: new Date("2026-03-28T12:00:00.000Z"),
         },
         createdAt: new Date("2026-03-28T12:00:00.000Z"),
@@ -172,8 +172,8 @@ describe("asset generation concepts repo", () => {
       asset: {
         status: "processing",
         provider: "s3",
-        source: "hunyuan",
-        styleVersion: "low-poly-v1",
+        source: "trellis",
+        styleVersion: "standard-3d-v2",
         updatedAt: new Date("2026-03-28T12:00:00.000Z"),
       },
       createdAt: new Date("2026-03-28T12:00:00.000Z"),
@@ -207,6 +207,7 @@ describe("asset generation concepts repo", () => {
 
     expect(firstClaim).toBe(true);
     expect(secondClaim).toBe(false);
+    expect(conceptDocuments[0]?.asset?.source).toBe("trellis");
   });
 
   it("marks a concept ready", async () => {
@@ -226,6 +227,7 @@ describe("asset generation concepts repo", () => {
 
     expect(conceptDocuments[0]?.asset?.status).toBe("ready");
     expect(conceptDocuments[0]?.asset?.jobId).toBe("job-1");
+    expect(conceptDocuments[0]?.asset?.source).toBe("trellis");
   });
 
   it("marks a concept failed", async () => {
@@ -237,11 +239,12 @@ describe("asset generation concepts repo", () => {
       id: concept?.id as string,
       userId: "user-1",
       prompt: "Generate one object.",
-      error: "Hunyuan job timed out.",
+      error: "Trellis generation timed out.",
       jobId: "job-1",
     });
 
     expect(conceptDocuments[0]?.asset?.status).toBe("failed");
-    expect(conceptDocuments[0]?.asset?.error).toBe("Hunyuan job timed out.");
+    expect(conceptDocuments[0]?.asset?.error).toBe("Trellis generation timed out.");
+    expect(conceptDocuments[0]?.asset?.source).toBe("trellis");
   });
 });

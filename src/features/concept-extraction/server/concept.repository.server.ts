@@ -43,7 +43,7 @@ export type ConceptDocument = {
   asset: {
     status: "pending" | "processing" | "ready" | "failed";
     provider: "s3";
-    source: "hunyuan";
+    source: "hunyuan" | "shap-e" | "cube3d" | "trellis" | "embodiedgen";
     key?: string;
     url?: string;
     previewKey?: string;

@@ -75,7 +75,7 @@ export type ConceptAsset = {
   /** Storage provider that owns the durable uploaded file. */
   provider: "s3";
   /** Upstream generator used to create the model. */
-  source: "hunyuan";
+  source: "hunyuan" | "shap-e" | "cube3d" | "trellis" | "embodiedgen";
   /** Provider-specific storage key for the generated 3D model. */
   key?: string;
   /** Stable public URL for the uploaded 3D model. */
@@ -86,11 +86,11 @@ export type ConceptAsset = {
   previewUrl?: string;
   /** MIME type of the uploaded model asset. */
   mimeType?: string;
-  /** Prompt sent to Hunyuan for this generation attempt. */
+  /** Prompt sent to the upstream 3D generator for this attempt. */
   prompt?: string;
   /** Shared style preset identifier used across the generated collection. */
   styleVersion: string;
-  /** Hunyuan job id for the current or most recent attempt. */
+  /** Provider job id or local generation id for the current or most recent attempt. */
   jobId?: string;
   /** Safe error message for failed attempts. */
   error?: string;

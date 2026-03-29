@@ -17,15 +17,9 @@ describe("getMongoClient", () => {
     process.env.GEMINI_API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
     process.env.GEMINI_API_KEY = "secret";
     process.env.GEMINI_MODEL = "gemini-2.5-flash";
-    process.env.HUNYUAN_API_ENDPOINT = "hunyuan.intl.tencentcloudapi.com";
-    process.env.HUNYUAN_API_REGION = "ap-singapore";
-    process.env.HUNYUAN_API_VERSION = "2023-09-01";
-    process.env.HUNYUAN_MODEL = "hunyuan-3d";
     process.env.MONGODB_URI = "mongodb://127.0.0.1:27017";
     process.env.MONGODB_DB_NAME = "memory_palace_test";
     process.env.SESSION_COOKIE_SECRET = "x".repeat(32);
-    process.env.TENCENTCLOUD_SECRET_ID = "secret-id";
-    process.env.TENCENTCLOUD_SECRET_KEY = "secret-key";
 
     const [clientA, clientB] = await Promise.all([getMongoClient(), getMongoClient()]);
     expect(clientA).toBe(clientB);

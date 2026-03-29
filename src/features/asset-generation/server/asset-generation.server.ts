@@ -1,6 +1,6 @@
 /**
  * @file asset-generation.server.ts
- * @description Coordinates bounded-concurrency Hunyuan generation jobs and per-concept asset persistence.
+ * @description Coordinates bounded-concurrency TRELLIS generation and per-concept asset persistence.
  * @module asset-generation
  */
 import { z } from "zod";
@@ -11,11 +11,8 @@ import {
   markConceptFailed,
   tryMarkConceptProcessing,
 } from "@/features/asset-generation/server/concepts-repo.server";
-import {
-  pollHunyuanJobUntilComplete,
-  submitHunyuanJob,
-} from "@/features/asset-generation/server/hunyuan-client.server";
-import { buildHunyuanPrompt } from "@/features/asset-generation/server/prompt-builder.server";
+import { buildAssetGenerationPrompt } from "@/features/asset-generation/server/prompt-builder.server";
+import { generateTrellisModel } from "@/features/asset-generation/server/trellis-client.server";
 import { uploadGeneratedAssetToS3 } from "@/features/asset-generation/server/s3-storage.server";
 import type {
   AssetGenerationBatchOptions,
@@ -71,7 +68,7 @@ async function mapWithConcurrencyLimit<TInput, TOutput>(
 }
 
 /**
- * Processes one concept through prompt building, Hunyuan generation, polling, upload, and Mongo updates.
+ * Processes one concept through prompt building, TRELLIS generation, upload, and Mongo updates.
  * @param input - Claimed concept metadata plus the owning user id and batch run id.
  * @returns A per-concept result object for the batch summary.
  * @remarks One concept failure never throws past this boundary after failure state is recorded.
@@ -85,7 +82,7 @@ async function processOneConcept(input: {
   let jobId: string | undefined;
 
   try {
-    prompt = buildHunyuanPrompt(input.concept);
+    prompt = buildAssetGenerationPrompt(input.concept);
     const claimed = await tryMarkConceptProcessing({
       id: input.concept.id,
       userId: input.userId,
@@ -100,17 +97,16 @@ async function processOneConcept(input: {
       };
     }
 
-    const submit = await submitHunyuanJob(prompt);
-    jobId = submit.jobId;
-    const completion = await pollHunyuanJobUntilComplete(jobId);
+    jobId = crypto.randomUUID();
+    const generated = await generateTrellisModel(prompt);
     const uploaded = await uploadGeneratedAssetToS3({
       userId: input.userId,
       conceptId: input.concept.id,
       jobId,
-      modelUrl: completion.modelUrl as string,
-      previewUrl: completion.previewUrl,
-      mimeType: completion.mimeType,
-      fileExtension: completion.fileExtension,
+      modelUrl: generated.modelUrl,
+      previewUrl: generated.previewUrl,
+      mimeType: generated.mimeType,
+      fileExtension: generated.fileExtension,
     });
 
     await markConceptDone({
@@ -137,18 +133,20 @@ async function processOneConcept(input: {
     const safeError =
       message === "Concept is missing a ready metaphor."
         ? message
-        : message === "Hunyuan polling timed out."
-          ? "Hunyuan job timed out."
-          : message === "Malformed Hunyuan response."
+        : message === "Trellis generation timed out."
+          ? message
+          : message === "Malformed Trellis response."
             ? message
             : message === "Failed to download generated asset." ||
                 message === "Failed to upload generated asset to storage."
               ? "Generated asset upload failed."
-              : message === "Hunyuan job submission failed."
+              : message.startsWith("Failed to connect to the Trellis app.")
                 ? message
-                : message.startsWith("Hunyuan job failed.")
-                  ? "Hunyuan job failed."
-                  : "Asset generation failed.";
+                : message === "Trellis generation is not configured."
+                  ? message
+                  : message.startsWith("Trellis generation failed.")
+                    ? message
+                    : "Asset generation failed.";
 
     try {
       await markConceptFailed({
@@ -180,13 +178,13 @@ async function processOneConcept(input: {
 }
 
 /**
- * Starts one bounded-concurrency asset generation batch for the current authenticated user.
+ * Starts one bounded-concurrency TRELLIS asset generation batch for the current authenticated user.
  * @param options - Optional batch size and concurrency overrides.
  * @returns A JSON-safe summary of selected, claimed, succeeded, failed, and skipped concepts.
  * @remarks
  * - The server function kicks off the batch and waits for completion before returning.
- * - Each concept becomes its own async Hunyuan job flow with isolated Mongo updates.
- * - Concurrency is capped so third-party API usage stays bounded.
+ * - Each concept becomes its own live TRELLIS request with isolated Mongo updates.
+ * - Concurrency is capped so third-party app usage stays bounded.
  */
 export async function generateAssetsForPendingConcepts(
   options?: AssetGenerationBatchOptions,
@@ -201,7 +199,7 @@ export async function generateAssetsForPendingConcepts(
  * @param userId - User whose ready-metaphor concepts should be selected from MongoDB.
  * @param options - Optional batch size and concurrency overrides.
  * @returns A JSON-safe summary of selected, claimed, succeeded, failed, and skipped concepts.
- * @remarks This is exported primarily so local server-side scripts can verify Tencent and S3 integration without a browser session.
+ * @remarks This is exported primarily so local server-side scripts can verify TRELLIS and S3 integration without a browser session.
  */
 export async function generateAssetsForPendingConceptsForUser(
   userId: string,

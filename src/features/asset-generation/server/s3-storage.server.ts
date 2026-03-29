@@ -74,8 +74,8 @@ function inferMimeType(fileExtension: string) {
 }
 
 /**
- * Downloads a Hunyuan result and uploads it to S3-compatible storage.
- * @param input - User, concept, and job metadata plus the Hunyuan result URLs.
+ * Downloads a generated model artifact and uploads it to S3-compatible storage.
+ * @param input - User, concept, and generation metadata plus the provider file URLs.
  * @returns The durable storage keys and public URLs written for the generated files.
  * @remarks Uses deterministic object keys so retries on the same job overwrite cleanly instead of creating orphaned files.
  */

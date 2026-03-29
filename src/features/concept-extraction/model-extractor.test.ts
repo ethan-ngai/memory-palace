@@ -191,6 +191,56 @@ describe("extractConceptsWithModel", () => {
     expect(result).toEqual([]);
   });
 
+  it("does not treat an embedded instructional [] as the final answer", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(
+          new Response(
+            JSON.stringify({
+              choices: [
+                {
+                  message: {
+                    content:
+                      "Return [] only if there are no concepts. Here are the concepts:\n- Graph Theory\n- Vertex\n- Edge",
+                  },
+                },
+              ],
+            }),
+            { status: 200 },
+          ),
+        )
+        .mockResolvedValueOnce(
+          new Response(
+            JSON.stringify({
+              choices: [
+                {
+                  message: {
+                    content: JSON.stringify([
+                      { name: "Graph Theory", description: "The study of vertices and edges." },
+                    ]),
+                  },
+                },
+              ],
+            }),
+            { status: 200 },
+          ),
+        ),
+    );
+
+    const { extractConceptsWithModel } =
+      await import("@/features/concept-extraction/server/model-extractor.server");
+    const result = await extractConceptsWithModel("Graph theory studies vertices and edges", {
+      type: "text",
+      content: "Graph theory studies vertices and edges",
+    });
+
+    expect(result).toEqual([
+      { name: "Graph Theory", description: "The study of vertices and edges." },
+    ]);
+  });
+
   it("throws a safe error when no JSON array can be recovered", async () => {
     vi.stubGlobal(
       "fetch",

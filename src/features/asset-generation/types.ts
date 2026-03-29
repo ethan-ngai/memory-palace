@@ -19,35 +19,6 @@ export type AssetGenerationConceptRow = {
 };
 
 /**
- * Lifecycle states returned by the Hunyuan job API.
- * @description Restricts polling logic to the explicit async job states the worker understands.
- */
-export type HunyuanJobStatus = "queued" | "running" | "succeeded" | "failed";
-
-/**
- * Parsed job submission response returned by the Hunyuan client.
- * @description Keeps downstream orchestration independent from raw API payload shape.
- */
-export type HunyuanSubmitResponse = {
-  jobId: string;
-  status: HunyuanJobStatus;
-};
-
-/**
- * Parsed job status payload returned while polling Hunyuan.
- * @description Carries only the fields the worker needs to decide whether to continue, fail, or upload.
- */
-export type HunyuanPollingResponse = {
-  jobId: string;
-  status: HunyuanJobStatus;
-  modelUrl?: string;
-  previewUrl?: string;
-  mimeType?: string;
-  fileExtension?: string;
-  error?: string;
-};
-
-/**
  * Per-concept result reported by the batch worker.
  * @description Keeps failure isolation explicit so callers can surface partial success without inspecting Mongo directly.
  */

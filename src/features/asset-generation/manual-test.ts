@@ -1,6 +1,6 @@
 /**
  * @file manual-test.ts
- * @description Manual server-side Tencent Hunyuan 3D batch runner for one user.
+ * @description Manual server-side TRELLIS batch runner for one user.
  * @module asset-generation
  */
 import { generateAssetsForPendingConceptsForUser } from "@/features/asset-generation/server/asset-generation.server";
@@ -19,9 +19,9 @@ async function main() {
     // ===== REPLACE THIS WITH YOUR INPUT =====
     // This script runs on the server in Node, not in the browser.
     // Use the local application user id that owns the concepts in MongoDB.
-    const userId = "PASTE_LOCAL_USER_ID_HERE";
+    const userId = "local-dev-user";
 
-    // Start with batchSize 1 so you only submit one Tencent 3D job while verifying the pipeline.
+    // Start with batchSize 1 so you only submit one TRELLIS request while verifying the pipeline.
     const result = await generateAssetsForPendingConceptsForUser(userId, {
       batchSize: 1,
       concurrency: 1,

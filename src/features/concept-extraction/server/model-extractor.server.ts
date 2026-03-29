@@ -255,7 +255,8 @@ function extractFirstJsonArray(raw: string) {
       const candidate = raw.slice(start, index + 1);
       try {
         const parsed = JSON.parse(candidate);
-        if (Array.isArray(parsed)) {
+        const candidateIsWholeResponse = candidate.trim() === raw.trim();
+        if (Array.isArray(parsed) && (parsed.length > 0 || candidateIsWholeResponse)) {
           return candidate;
         }
       } catch {
@@ -453,10 +454,24 @@ async function generateWithGemini(cleanedText: string, input: ExtractionInput) {
   });
 
   if (!response.ok) {
-    throw new Error(`Gemini request failed with status ${response.status}.`);
+    const details = await response.text();
+    throw new Error(
+      `Gemini request failed with status ${response.status}.${details ? ` ${details}` : ""}`,
+    );
   }
 
   return getGeminiMessageContent((await response.json()) as GeminiResponse);
+}
+
+/**
+ * Extracts concepts from PDF text by sending the entire cleaned document to Gemini in one request.
+ * @param cleanedText - Normalized PDF text after ingestion.
+ * @param input - Original PDF extraction input used for prompt context.
+ * @returns Validated concepts parsed from Gemini's full-document response.
+ */
+async function generateConceptsFromPdfWithGemini(cleanedText: string, input: ExtractionInput) {
+  const rawContent = await generateWithGemini(cleanedText, input);
+  return parseConceptsFromModelContent(rawContent);
 }
 
 /**
@@ -519,18 +534,15 @@ async function repairWithK2(rawContent: string) {
  */
 export async function extractConceptsWithModel(cleanedText: string, input: ExtractionInput) {
   const provider = input.type === "pdf" ? "gemini" : "k2";
-  const rawContent =
-    provider === "gemini"
-      ? await generateWithGemini(cleanedText, input)
-      : await generateWithK2(cleanedText, input);
+  if (provider === "gemini") {
+    return generateConceptsFromPdfWithGemini(cleanedText, input);
+  }
+
+  const rawContent = await generateWithK2(cleanedText, input);
   if (process.env.CONCEPT_EXTRACTION_DEBUG === "1") {
     console.log("[concept-extraction] model provider:", provider);
     console.log("[concept-extraction] model raw response:");
     console.log(rawContent.slice(0, 4000));
-  }
-
-  if (provider === "gemini") {
-    return parseConceptsFromModelContent(rawContent);
   }
 
   try {

@@ -8,7 +8,7 @@ import {
   getConceptsCollection,
   type ConceptDocument,
 } from "@/features/concept-extraction/server/concept.repository.server";
-import { HUNYUAN_STYLE_VERSION } from "@/features/asset-generation/server/prompt-builder.server";
+import { ASSET_STYLE_VERSION } from "@/features/asset-generation/server/prompt-builder.server";
 import type { AssetGenerationConceptRow } from "@/features/asset-generation/types";
 
 function toConceptRow(document: ConceptDocument): AssetGenerationConceptRow {
@@ -100,9 +100,9 @@ export async function tryMarkConceptProcessing(input: {
         asset: {
           status: "processing",
           provider: "s3",
-          source: "hunyuan",
+          source: "trellis",
           prompt: input.prompt,
-          styleVersion: HUNYUAN_STYLE_VERSION,
+          styleVersion: ASSET_STYLE_VERSION,
           startedAt: now,
           completedAt: null,
           updatedAt: now,
@@ -153,14 +153,14 @@ export async function markConceptDone(input: {
         asset: {
           status: "ready",
           provider: "s3",
-          source: "hunyuan",
+          source: "trellis",
           key: input.key,
           url: input.url,
           previewKey: input.previewKey,
           previewUrl: input.previewUrl,
           mimeType: input.mimeType,
           prompt: input.prompt,
-          styleVersion: HUNYUAN_STYLE_VERSION,
+          styleVersion: ASSET_STYLE_VERSION,
           jobId: input.jobId,
           startedAt: existing.asset?.startedAt ?? now,
           completedAt: now,
@@ -206,9 +206,9 @@ export async function markConceptFailed(input: {
         asset: {
           status: "failed",
           provider: "s3",
-          source: "hunyuan",
+          source: "trellis",
           prompt: input.prompt ?? existing.asset?.prompt,
-          styleVersion: HUNYUAN_STYLE_VERSION,
+          styleVersion: ASSET_STYLE_VERSION,
           jobId: input.jobId,
           error: input.error,
           startedAt: existing.asset?.startedAt ?? now,

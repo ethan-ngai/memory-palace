@@ -5,10 +5,9 @@ const getConceptsNeedingAssets = vi.fn();
 const tryMarkConceptProcessing = vi.fn();
 const markConceptDone = vi.fn();
 const markConceptFailed = vi.fn();
-const submitHunyuanJob = vi.fn();
-const pollHunyuanJobUntilComplete = vi.fn();
+const generateTrellisModel = vi.fn();
 const uploadGeneratedAssetToS3 = vi.fn();
-const buildHunyuanPrompt = vi.fn();
+const buildAssetGenerationPrompt = vi.fn();
 
 vi.mock("@/features/auth/server/auth-session.server", () => ({
   requireAuthUser,
@@ -21,9 +20,8 @@ vi.mock("@/features/asset-generation/server/concepts-repo.server", () => ({
   markConceptFailed,
 }));
 
-vi.mock("@/features/asset-generation/server/hunyuan-client.server", () => ({
-  submitHunyuanJob,
-  pollHunyuanJobUntilComplete,
+vi.mock("@/features/asset-generation/server/trellis-client.server", () => ({
+  generateTrellisModel,
 }));
 
 vi.mock("@/features/asset-generation/server/s3-storage.server", () => ({
@@ -31,14 +29,14 @@ vi.mock("@/features/asset-generation/server/s3-storage.server", () => ({
 }));
 
 vi.mock("@/features/asset-generation/server/prompt-builder.server", () => ({
-  buildHunyuanPrompt,
+  buildAssetGenerationPrompt,
 }));
 
 describe("generateAssetsForPendingConcepts", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     requireAuthUser.mockResolvedValue({ id: "user-1" });
-    buildHunyuanPrompt.mockReturnValue("Generate one object.");
+    buildAssetGenerationPrompt.mockReturnValue("Generate one object.");
   });
 
   it("processes a batch and returns summary counts", async () => {
@@ -73,15 +71,15 @@ describe("generateAssetsForPendingConcepts", () => {
       },
     ]);
     tryMarkConceptProcessing.mockResolvedValue(true);
-    submitHunyuanJob.mockResolvedValue({ jobId: "job-1", status: "queued" });
-    pollHunyuanJobUntilComplete.mockResolvedValue({
-      jobId: "job-1",
-      status: "succeeded",
+    generateTrellisModel.mockResolvedValue({
       modelUrl: "https://example.com/model.glb",
+      providerFileUrl: "https://trellis.example.com/model.glb",
+      mimeType: "model/gltf-binary",
+      fileExtension: "glb",
     });
     uploadGeneratedAssetToS3.mockResolvedValue({
-      key: "concept-assets/user-1/concept-1/job-1.glb",
-      url: "https://cdn.example.com/concept-assets/user-1/concept-1/job-1.glb",
+      key: "concept-assets/user-1/concept-1/generation-1.glb",
+      url: "https://cdn.example.com/concept-assets/user-1/concept-1/generation-1.glb",
       mimeType: "model/gltf-binary",
     });
 
@@ -130,17 +128,17 @@ describe("generateAssetsForPendingConcepts", () => {
       },
     ]);
     tryMarkConceptProcessing.mockResolvedValue(true);
-    submitHunyuanJob
-      .mockResolvedValueOnce({ jobId: "job-1", status: "queued" })
-      .mockRejectedValueOnce(new Error("Hunyuan job submission failed."));
-    pollHunyuanJobUntilComplete.mockResolvedValue({
-      jobId: "job-1",
-      status: "succeeded",
-      modelUrl: "https://example.com/model.glb",
-    });
+    generateTrellisModel
+      .mockResolvedValueOnce({
+        modelUrl: "https://example.com/model.glb",
+        providerFileUrl: "https://trellis.example.com/model.glb",
+        mimeType: "model/gltf-binary",
+        fileExtension: "glb",
+      })
+      .mockRejectedValueOnce(new Error("Trellis generation failed."));
     uploadGeneratedAssetToS3.mockResolvedValue({
-      key: "concept-assets/user-1/concept-1/job-1.glb",
-      url: "https://cdn.example.com/concept-assets/user-1/concept-1/job-1.glb",
+      key: "concept-assets/user-1/concept-1/generation-1.glb",
+      url: "https://cdn.example.com/concept-assets/user-1/concept-1/generation-1.glb",
       mimeType: "model/gltf-binary",
     });
 
@@ -177,7 +175,7 @@ describe("generateAssetsForPendingConcepts", () => {
     const result = await generateAssetsForPendingConcepts();
 
     expect(result.skipped).toBe(1);
-    expect(submitHunyuanJob).not.toHaveBeenCalled();
+    expect(generateTrellisModel).not.toHaveBeenCalled();
   });
 
   it("requires an authenticated user", async () => {
@@ -207,11 +205,11 @@ describe("generateAssetsForPendingConcepts", () => {
       },
     ]);
     tryMarkConceptProcessing.mockResolvedValue(true);
-    submitHunyuanJob.mockResolvedValue({ jobId: "job-1", status: "queued" });
-    pollHunyuanJobUntilComplete.mockResolvedValue({
-      jobId: "job-1",
-      status: "succeeded",
+    generateTrellisModel.mockResolvedValue({
       modelUrl: "https://example.com/model.glb",
+      providerFileUrl: "https://trellis.example.com/model.glb",
+      mimeType: "model/gltf-binary",
+      fileExtension: "glb",
     });
     uploadGeneratedAssetToS3.mockRejectedValue(
       new Error("Failed to upload generated asset to storage."),
@@ -226,6 +224,89 @@ describe("generateAssetsForPendingConcepts", () => {
     expect(markConceptFailed).toHaveBeenCalledWith(
       expect.objectContaining({
         error: "Generated asset upload failed.",
+      }),
+    );
+  });
+
+  it("preserves detailed Trellis provider failures in the batch result", async () => {
+    getConceptsNeedingAssets.mockResolvedValue([
+      {
+        id: "concept-1",
+        userId: "user-1",
+        name: "Neuron",
+        description: "Cell that transmits signals.",
+        metaphor: {
+          status: "ready",
+          objectName: "glass neuron lantern",
+          prompt: "A glass neuron lantern.",
+          rationale: "Signals.",
+          generatedAt: "2026-03-28T12:00:00.000Z",
+        },
+        asset: null,
+      },
+    ]);
+    tryMarkConceptProcessing.mockResolvedValue(true);
+    generateTrellisModel.mockRejectedValue(
+      new Error("Trellis generation failed. Generation submit failed with status 503."),
+    );
+
+    const { generateAssetsForPendingConcepts } =
+      await import("@/features/asset-generation/server/asset-generation.server");
+    const result = await generateAssetsForPendingConcepts();
+
+    expect(result.failed).toBe(1);
+    expect(result.results[0]?.error).toBe(
+      "Trellis generation failed. Generation submit failed with status 503.",
+    );
+    expect(markConceptFailed).toHaveBeenCalledWith(
+      expect.objectContaining({
+        error: "Trellis generation failed. Generation submit failed with status 503.",
+      }),
+    );
+  });
+
+  it("uses a synthetic generation id as the persisted job id", async () => {
+    getConceptsNeedingAssets.mockResolvedValue([
+      {
+        id: "concept-1",
+        userId: "user-1",
+        name: "Neuron",
+        description: "Cell that transmits signals.",
+        metaphor: {
+          status: "ready",
+          objectName: "glass neuron lantern",
+          prompt: "A glass neuron lantern.",
+          rationale: "Signals.",
+          generatedAt: "2026-03-28T12:00:00.000Z",
+        },
+        asset: null,
+      },
+    ]);
+    tryMarkConceptProcessing.mockResolvedValue(true);
+    generateTrellisModel.mockResolvedValue({
+      modelUrl: "https://example.com/model.glb",
+      providerFileUrl: "https://trellis.example.com/model.glb",
+      mimeType: "model/gltf-binary",
+      fileExtension: "glb",
+    });
+    uploadGeneratedAssetToS3.mockResolvedValue({
+      key: "concept-assets/user-1/concept-1/generation-1.glb",
+      url: "https://cdn.example.com/concept-assets/user-1/concept-1/generation-1.glb",
+      mimeType: "model/gltf-binary",
+    });
+
+    const { generateAssetsForPendingConcepts } =
+      await import("@/features/asset-generation/server/asset-generation.server");
+    await generateAssetsForPendingConcepts();
+
+    expect(uploadGeneratedAssetToS3).toHaveBeenCalledWith(
+      expect.objectContaining({
+        jobId: expect.any(String),
+      }),
+    );
+    expect(markConceptDone).toHaveBeenCalledWith(
+      expect.objectContaining({
+        jobId: expect.any(String),
       }),
     );
   });
