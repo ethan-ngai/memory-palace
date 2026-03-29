@@ -6,6 +6,8 @@
 import { createServerFn } from "@tanstack/react-start";
 import {
   assetGenerationBatchOptionsSchema,
+  generateConceptAssetsForCurrentUser,
+  generateConceptAssetsInputSchema,
   generateAssetsForPendingConcepts,
 } from "@/features/asset-generation/server/asset-generation.server";
 
@@ -33,4 +35,14 @@ export const startAssetGeneration = createServerFn({ method: "POST" })
   .inputValidator(assetGenerationBatchOptionsSchema)
   .handler(async ({ data }) => {
     return generateAssetsForPendingConcepts(data);
+  });
+
+/**
+ * Generates TRELLIS assets for one explicit concept selection owned by the current user.
+ * @remarks The importer uses this targeted path to surface per-concept progress and timing in the UI.
+ */
+export const generateConceptAssets = createServerFn({ method: "POST" })
+  .inputValidator(generateConceptAssetsInputSchema)
+  .handler(async ({ data }) => {
+    return generateConceptAssetsForCurrentUser(data);
   });

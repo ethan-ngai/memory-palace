@@ -293,6 +293,27 @@ export async function listConceptsByUserId(userId: string, session?: ClientSessi
 }
 
 /**
+ * Lists all concepts assigned to one room for a single user.
+ * @param userId - Local application user id used to scope reads.
+ * @param roomId - Stable room id whose concepts should be returned.
+ * @param session - Optional MongoDB session used when this read participates in a wider workflow.
+ * @returns Persisted concepts for the requested room in newest-first order.
+ * @remarks Powers room placement generation without forcing the caller to fetch all rooms' concepts and filter in memory.
+ */
+export async function listConceptsByRoomIdForUser(
+  userId: string,
+  roomId: string,
+  session?: ClientSession,
+) {
+  const concepts = await getConceptsCollection();
+  const documents = await concepts
+    .find({ userId, roomId }, { session })
+    .sort({ updatedAt: -1 })
+    .toArray();
+  return documents.map(toStoredConcept);
+}
+
+/**
  * Loads a specific ordered set of concepts for one user.
  * @param userId - Local application user id used to scope reads.
  * @param conceptIds - Concept ids whose order should be preserved in the returned array.

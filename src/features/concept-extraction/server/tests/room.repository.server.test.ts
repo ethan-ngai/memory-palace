@@ -8,6 +8,19 @@ const roomsState: Array<{
   slug: string;
   description: string;
   conceptCount: number;
+  anchorSet: {
+    version: "1.0";
+    created: string;
+    description: string;
+    totalCandidates: number;
+    anchors: Array<{
+      id: number;
+      label: string;
+      surface: string;
+      position: { x: number; y: number; z: number };
+    }>;
+  } | null;
+  anchorSetImportedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }> = [];
@@ -26,7 +39,14 @@ const roomsCollection = {
           ),
     }),
   })),
-  findOne: vi.fn(async (query: { userId: string; slug: string }) => {
+  findOne: vi.fn(async (query: { userId: string; slug?: string; _id?: ObjectId }) => {
+    if (query._id) {
+      return (
+        roomsState.find((room) => room.userId === query.userId && room._id.equals(query._id)) ??
+        null
+      );
+    }
+
     return (
       roomsState.find((room) => room.userId === query.userId && room.slug === query.slug) ?? null
     );
@@ -37,7 +57,11 @@ const roomsCollection = {
       update: {
         $setOnInsert?: Omit<(typeof roomsState)[number], never>;
         $inc?: { conceptCount: number };
-        $set?: { updatedAt: Date };
+        $set?: {
+          updatedAt: Date;
+          anchorSet?: (typeof roomsState)[number]["anchorSet"];
+          anchorSetImportedAt?: Date | null;
+        };
       },
     ) => {
       if (query.userId && query.slug && update.$setOnInsert) {
@@ -61,6 +85,21 @@ const roomsCollection = {
         }
 
         existing.conceptCount += update.$inc.conceptCount;
+        existing.updatedAt = update.$set.updatedAt;
+        return existing;
+      }
+
+      if (query._id && query.userId && update.$set?.anchorSet) {
+        const existing = roomsState.find(
+          (room) => room.userId === query.userId && room._id.equals(query._id!),
+        );
+
+        if (!existing) {
+          return null;
+        }
+
+        existing.anchorSet = update.$set.anchorSet;
+        existing.anchorSetImportedAt = update.$set.anchorSetImportedAt ?? null;
         existing.updatedAt = update.$set.updatedAt;
         return existing;
       }
@@ -136,5 +175,35 @@ describe("room repository", () => {
 
     const updated = await incrementRoomConceptCount(created.id, 2);
     expect(updated.conceptCount).toBe(2);
+  });
+
+  it("replaces and reads one active anchor set per room", async () => {
+    const { createRoomForUser, getRoomAnchorSetByRoomId, replaceRoomAnchorSet } =
+      await import("@/features/concept-extraction/server/room.repository.server");
+
+    const created = await createRoomForUser({
+      userId: "user-1",
+      name: "Science",
+      slug: "science",
+      description: "STEM concepts",
+    });
+
+    await replaceRoomAnchorSet({
+      userId: "user-1",
+      roomId: created.id,
+      anchorSet: {
+        version: "1.0",
+        created: "2026-03-29T03:44:14.009Z",
+        description: "Anchors",
+        totalCandidates: 1,
+        anchors: [{ id: 1, label: "Desk", surface: "surface", position: { x: 0, y: 1, z: 2 } }],
+      },
+    });
+
+    await expect(getRoomAnchorSetByRoomId("user-1", created.id)).resolves.toEqual(
+      expect.objectContaining({
+        totalCandidates: 1,
+      }),
+    );
   });
 });

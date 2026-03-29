@@ -6,6 +6,7 @@
 import { ObjectId, type ClientSession, type Collection } from "mongodb";
 import { getDatabase } from "@/lib/server/mongodb.server";
 import type { RoomSummary } from "@/features/concept-extraction/types";
+import type { RoomAnchorSet } from "@/features/game/types";
 
 /**
  * MongoDB representation of a room summary.
@@ -18,6 +19,8 @@ export type RoomDocument = {
   slug: string;
   description: string;
   conceptCount: number;
+  anchorSet?: RoomAnchorSet | null;
+  anchorSetImportedAt?: Date | null;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -49,6 +52,8 @@ function toRoomSummary(document: RoomDocument): RoomSummary {
     slug: document.slug,
     description: document.description,
     conceptCount: document.conceptCount,
+    anchorSetImportedAt: document.anchorSetImportedAt?.toISOString() ?? null,
+    anchorCount: document.anchorSet?.anchors.length ?? 0,
     createdAt: document.createdAt.toISOString(),
     updatedAt: document.updatedAt.toISOString(),
   };
@@ -132,6 +137,8 @@ export async function createRoomForUser(input: CreateRoomInput, session?: Client
         slug: input.slug,
         description: input.description,
         conceptCount: 0,
+        anchorSet: null,
+        anchorSetImportedAt: null,
         createdAt: now,
         updatedAt: now,
       },
@@ -212,6 +219,78 @@ export async function incrementRoomConceptCountBySlug(
 
   if (!document) {
     throw new Error(`Room ${slug} no longer exists for user ${userId}.`);
+  }
+
+  return toRoomSummary(document);
+}
+
+/**
+ * Finds one room by id for a specific user.
+ * @param userId - Local application user id that owns the room.
+ * @param roomId - Mongo ObjectId hex string for the room.
+ * @param session - Optional MongoDB session used by wider workflows.
+ * @returns The matching room summary, or null when the user does not own that room.
+ * @remarks Keeps ownership checks in the repository so higher-level room placement code can fail fast on invalid room ids.
+ */
+export async function findRoomByIdForUser(userId: string, roomId: string, session?: ClientSession) {
+  const rooms = await getRoomsCollection();
+  const document = await rooms.findOne({ _id: new ObjectId(roomId), userId }, { session });
+  return document ? toRoomSummary(document) : null;
+}
+
+/**
+ * Reads the active imported anchor set for one owned room.
+ * @param userId - Local application user id that owns the room.
+ * @param roomId - Mongo ObjectId hex string for the room.
+ * @param session - Optional MongoDB session used when this read participates in a wider flow.
+ * @returns The active anchor set, or null when the room has none.
+ * @remarks Returns only the anchor payload because placement generation does not need the rest of the room document once ownership has been checked.
+ */
+export async function getRoomAnchorSetByRoomId(
+  userId: string,
+  roomId: string,
+  session?: ClientSession,
+) {
+  const rooms = await getRoomsCollection();
+  const document = await rooms.findOne({ _id: new ObjectId(roomId), userId }, { session });
+  return document?.anchorSet ?? null;
+}
+
+/**
+ * Replaces the active imported anchor set for one owned room.
+ * @param input - Room id plus the validated anchor payload that should become current.
+ * @param session - Optional MongoDB session used when the replacement participates in a wider write flow.
+ * @returns The updated room summary after the new anchor set is stored.
+ * @remarks Stores the full imported payload on the room document so room selection and viewer loading can stay single-read.
+ */
+export async function replaceRoomAnchorSet(
+  input: {
+    userId: string;
+    roomId: string;
+    anchorSet: RoomAnchorSet;
+  },
+  session?: ClientSession,
+) {
+  const rooms = await getRoomsCollection();
+  const now = new Date();
+  const document = await rooms.findOneAndUpdate(
+    { _id: new ObjectId(input.roomId), userId: input.userId },
+    {
+      $set: {
+        anchorSet: input.anchorSet,
+        anchorSetImportedAt: now,
+        updatedAt: now,
+      },
+    },
+    {
+      returnDocument: "after",
+      includeResultMetadata: false,
+      session,
+    },
+  );
+
+  if (!document) {
+    throw new Error(`Room ${input.roomId} was not found for the current user.`);
   }
 
   return toRoomSummary(document);

@@ -5,6 +5,7 @@
  */
 import { z } from "zod";
 import { requireAuthUser } from "@/features/auth/server/auth-session.server";
+import { findConceptsByIdsForUser } from "@/features/concept-extraction/server/concept.repository.server";
 import {
   getConceptsNeedingAssets,
   markConceptDone,
@@ -21,6 +22,8 @@ import type {
   AssetGenerationBatchRuntimeOptions,
   AssetGenerationProgressEvent,
   AssetGenerationResultItem,
+  GenerateConceptAssetsInput,
+  GenerateConceptAssetsResult,
 } from "@/features/asset-generation/types";
 
 /**
@@ -41,6 +44,29 @@ export const assetGenerationBatchOptionsSchema = z
     concurrency: z.number().int().min(1).max(5).optional(),
   })
   .optional();
+
+export const generateConceptAssetsInputSchema = z.object({
+  conceptIds: z.array(z.string().min(1)).min(1),
+});
+
+/**
+ * Converts one stored concept into the thinner asset-generation worker shape.
+ * @param concept - Stored concept loaded from the concept repository.
+ * @returns Minimal concept row needed by the generation worker.
+ * @remarks Keeps explicit concept generation on the same worker path as batch generation.
+ */
+function toAssetGenerationConceptRow(
+  concept: Awaited<ReturnType<typeof findConceptsByIdsForUser>>[number],
+): AssetGenerationConceptRow {
+  return {
+    id: concept.id,
+    userId: concept.userId,
+    name: concept.name,
+    description: concept.description,
+    metaphor: concept.metaphor,
+    asset: concept.asset,
+  };
+}
 
 /**
  * Runs work items with a bounded number of concurrent workers.
@@ -351,6 +377,81 @@ export async function generateAssetsForPendingConceptsForUser(
 
   return {
     totalSelected,
+    totalClaimed: results.filter((result) => result.status !== "skipped").length,
+    succeeded: results.filter((result) => result.status === "succeeded").length,
+    failed: results.filter((result) => result.status === "failed").length,
+    skipped: results.filter((result) => result.status === "skipped").length,
+    results,
+  };
+}
+
+/**
+ * Generates assets for one explicit ordered concept selection owned by the current user.
+ * @param input - Concept ids that should be generated in caller-controlled order.
+ * @returns A JSON-safe summary covering only the requested concepts.
+ * @remarks This path exists for UX flows that need deterministic per-concept progress reporting instead of opaque batch completion.
+ */
+export async function generateConceptAssetsForCurrentUser(
+  input: GenerateConceptAssetsInput,
+): Promise<GenerateConceptAssetsResult> {
+  const parsedInput = generateConceptAssetsInputSchema.parse(input);
+  const user = await requireAuthUser();
+  return generateConceptAssetsForUser(user.id, parsedInput);
+}
+
+/**
+ * Generates assets for one explicit ordered concept selection for a specific user.
+ * @param userId - Local application user id that owns the concepts.
+ * @param input - Concept ids that should be generated in caller-controlled order.
+ * @param options - Optional server-side progress callback used by scripts or future streaming paths.
+ * @returns A JSON-safe summary covering only the requested concepts.
+ * @remarks Each concept is processed serially so the caller can derive stable progress and ETA from real completion timings.
+ */
+export async function generateConceptAssetsForUser(
+  userId: string,
+  input: GenerateConceptAssetsInput,
+  options?: { onProgress?: (event: AssetGenerationProgressEvent) => void },
+): Promise<GenerateConceptAssetsResult> {
+  const parsedInput = generateConceptAssetsInputSchema.parse(input);
+  const uniqueConceptIds = Array.from(new Set(parsedInput.conceptIds));
+
+  if (uniqueConceptIds.length !== parsedInput.conceptIds.length) {
+    throw new Error("Duplicate concept ids are not allowed.");
+  }
+
+  const concepts = await findConceptsByIdsForUser(userId, uniqueConceptIds);
+  if (concepts.length !== uniqueConceptIds.length) {
+    throw new Error("One or more requested concepts were not found for the current user.");
+  }
+
+  const runId = crypto.randomUUID();
+  const results: AssetGenerationResultItem[] = [];
+
+  for (const [index, concept] of concepts.entries()) {
+    options?.onProgress?.({
+      phase: "selected",
+      conceptId: concept.id,
+      conceptName: concept.name,
+      conceptIndex: index + 1,
+      totalConcepts: concepts.length,
+      objectName: concept.metaphor?.objectName,
+      prompt: concept.metaphor?.prompt ?? undefined,
+    });
+
+    results.push(
+      await processOneConcept({
+        concept: toAssetGenerationConceptRow(concept),
+        userId,
+        runId,
+        conceptIndex: index + 1,
+        totalConcepts: concepts.length,
+        onProgress: options?.onProgress,
+      }),
+    );
+  }
+
+  return {
+    totalRequested: concepts.length,
     totalClaimed: results.filter((result) => result.status !== "skipped").length,
     succeeded: results.filter((result) => result.status === "succeeded").length,
     failed: results.filter((result) => result.status === "failed").length,

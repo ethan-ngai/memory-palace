@@ -78,3 +78,24 @@ export type AssetGenerationBatchResult = {
   skipped: number;
   results: AssetGenerationResultItem[];
 };
+
+/**
+ * Explicit concept selection accepted by the targeted asset-generation API.
+ * @description Lets the UI drive generation in a known order so it can show per-item progress and timing.
+ */
+export type GenerateConceptAssetsInput = {
+  conceptIds: string[];
+};
+
+/**
+ * JSON-safe summary returned after generating assets for an explicit concept set.
+ * @description Mirrors the batch result shape while preserving the caller-supplied total for progress displays.
+ */
+export type GenerateConceptAssetsResult = {
+  totalRequested: number;
+  totalClaimed: number;
+  succeeded: number;
+  failed: number;
+  skipped: number;
+  results: AssetGenerationResultItem[];
+};

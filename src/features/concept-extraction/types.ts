@@ -193,6 +193,10 @@ export type RoomSummary = {
   description: string;
   /** Number of concepts currently assigned to the room. */
   conceptCount: number;
+  /** ISO timestamp of the current imported anchor-set replacement, or null before the room has anchors. */
+  anchorSetImportedAt?: string | null;
+  /** Count of anchors in the current imported anchor set, or zero when none has been imported. */
+  anchorCount?: number;
   /** ISO creation timestamp from Atlas persistence. */
   createdAt: string;
   /** ISO update timestamp from Atlas persistence. */

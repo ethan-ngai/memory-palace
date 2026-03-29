@@ -34,13 +34,18 @@ import {
 import pako from "pako";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { clone as cloneSkinned } from "three/addons/utils/SkeletonUtils.js";
+import type {
+  RoomAnchorSet,
+  RoomPlacementInspection,
+  RoomPlacementItem,
+} from "@/features/game/types";
 
 const ANCHOR_SPHERE_RADIUS = 0.003;
 const ANCHOR_RING_INNER_RADIUS = 0.006;
 const ANCHOR_RING_OUTER_RADIUS = 0.008;
 const ANCHOR_STEM_HEIGHT = 0.025;
 const DEFAULT_EMPTY_STATE =
-  "No anchors yet.<br>Load a .spz or .ply file,<br>switch to Tag mode,<br>and click surfaces.";
+  "No anchors imported yet.<br>Load a .spz or .ply room,<br>then import the Lavender<br>anchor JSON for this room.";
 /**
  * Uses a bundled CDN entry so Spark's internal bare `three` import resolves without the
  * import map present in the original standalone HTML prototype.
@@ -347,6 +352,12 @@ export interface AnchorTaggerElements {
  */
 export interface AnchorTaggerController {
   dispose: () => void;
+  loadSceneFile: (file: File) => Promise<void>;
+  renderPlacements: (placements: RoomPlacementItem[]) => Promise<void>;
+  setAnchorSet: (anchorSet: RoomAnchorSet | null) => void;
+  setOnPlacementInspect: (
+    listener: ((placement: RoomPlacementInspection | null) => void) | null,
+  ) => void;
 }
 
 /**
@@ -378,20 +389,33 @@ let sparkSplatMeshPromise: Promise<SplatMeshConstructor> | undefined;
  * - Loading the same browser module as `rohan/index.html` removes that runtime discrepancy.
  */
 async function loadSparkSplatMesh() {
-  sparkSplatMeshPromise ??= import(/* @vite-ignore */ SPARK_CDN_MODULE_URL)
-    .then((module) => {
+  sparkSplatMeshPromise ??= (async () => {
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => {
+      const first = typeof args[0] === "string" ? args[0] : "";
+      if (first.includes("Multiple instances of Three.js being imported")) {
+        return;
+      }
+
+      originalWarn(...args);
+    };
+
+    try {
+      const module = await import(/* @vite-ignore */ SPARK_CDN_MODULE_URL);
       console.info("[anchor-tagger] Loaded Spark CDN module.", {
         url: SPARK_CDN_MODULE_URL,
       });
       return module.SplatMesh as SplatMeshConstructor;
-    })
-    .catch((error) => {
+    } catch (error) {
       console.error("[anchor-tagger] Failed to load Spark CDN module.", {
         error,
         url: SPARK_CDN_MODULE_URL,
       });
       throw error;
-    });
+    } finally {
+      console.warn = originalWarn;
+    }
+  })();
 
   return sparkSplatMeshPromise;
 }
@@ -404,8 +428,9 @@ async function loadSparkSplatMesh() {
  * on `#include <splatDefines>`.
  */
 function ensureSparkShaderChunk() {
-  if (ShaderChunk.splatDefines !== SPARK_SPLAT_DEFINES_CHUNK) {
-    ShaderChunk.splatDefines = SPARK_SPLAT_DEFINES_CHUNK;
+  const shaderChunkRegistry = ShaderChunk as Record<string, string | undefined>;
+  if (shaderChunkRegistry.splatDefines !== SPARK_SPLAT_DEFINES_CHUNK) {
+    shaderChunkRegistry.splatDefines = SPARK_SPLAT_DEFINES_CHUNK;
     console.info("[anchor-tagger] Registered local ShaderChunk.splatDefines.");
   }
 }
@@ -472,8 +497,13 @@ export function createAnchorTagger(elements: AnchorTaggerElements): AnchorTagger
     hemi: new HemisphereLight(0xffffff, 0x24354a, 1.15),
   };
   const listeners: Array<{ event: string; target: EventTarget; handler: EventListener }> = [];
+  const placementAssetPromises = new Map<string, Promise<Object3D>>();
 
   let anchors: AnchorRecord[] = [];
+  let activeAnchorSet: RoomAnchorSet | null = null;
+  let importedAnchorCount = 0;
+  let currentPlacements: RoomPlacementItem[] = [];
+  let placementInspectListener: ((placement: RoomPlacementInspection | null) => void) | null = null;
   let dragCounter = 0;
   let draggedAnchor: AnchorRecord | null = null;
   let isDraggingAnchor = false;
@@ -494,15 +524,38 @@ export function createAnchorTagger(elements: AnchorTaggerElements): AnchorTagger
   let renderPending = false;
   let rightButton = false;
   let sceneScale = 1;
+  let sceneContentOffset = new Vector3();
   let sourceRayCount = 0;
   let sourceRayPositions: Float32Array | null = null;
-  let splatMesh: (Object3D & { initialized: Promise<unknown>; position: Vector3 }) | null = null;
+  let scenePointCloud:
+    | Points<BufferGeometry, PointsMaterial>
+    | (Object3D & { initialized: Promise<unknown>; position: Vector3 })
+    | null = null;
   let viewportDragging = false;
   let viewportMouseX = 0;
   let viewportMouseY = 0;
 
+  /**
+   * Builds the popup-friendly inspection payload for one clicked placement.
+   * @param placement - Clicked placement metadata from the rendered object graph.
+   * @returns JSON-safe inspection content for React state.
+   */
+  function toPlacementInspection(placement: RoomPlacementItem): RoomPlacementInspection {
+    return {
+      anchorId: placement.anchorId,
+      conceptId: placement.conceptId,
+      conceptName: placement.conceptName,
+      conceptDescription: placement.conceptDescription,
+      metaphorObjectName: placement.metaphorObjectName,
+      metaphorRationale: placement.metaphorRationale,
+      label: placement.label,
+      surface: placement.surface,
+    };
+  }
+
   scene.background = new Color("#07090d");
   renderer.outputColorSpace = SRGBColorSpace;
+  renderer.domElement.style.touchAction = "none";
   elements.viewport.appendChild(renderer.domElement);
   scene.add(propLights.hemi);
   scene.add(propLights.dir);
@@ -745,6 +798,39 @@ export function createAnchorTagger(elements: AnchorTaggerElements): AnchorTagger
   }
 
   /**
+   * Finds the closest rendered placed object under the pointer.
+   * @param clientX - Viewport-space x coordinate.
+   * @param clientY - Viewport-space y coordinate.
+   * @returns The clicked placement metadata, or null when no placement was hit.
+   * @remarks Recursive mesh raycasts provide accurate picking on generated assets with complex child hierarchies.
+   */
+  function pickPlacement(clientX: number, clientY: number) {
+    if (!placedPropRoots.length) {
+      return null;
+    }
+
+    const rect = renderer.domElement.getBoundingClientRect();
+    pointerNdc.set(
+      ((clientX - rect.left) / rect.width) * 2 - 1,
+      ((clientY - rect.top) / rect.height) * -2 + 1,
+    );
+    raycaster.setFromCamera(pointerNdc, camera);
+    const hits = raycaster.intersectObjects(placedPropRoots, true);
+    for (const hit of hits) {
+      let current: Object3D | null = hit.object;
+      while (current) {
+        const placement = current.userData.roomPlacement as RoomPlacementItem | undefined;
+        if (placement) {
+          return placement;
+        }
+        current = current.parent;
+      }
+    }
+
+    return null;
+  }
+
+  /**
    * Finds the closest projected anchor to the pointer for drag-to-reposition.
    * @param clientX - Viewport-space x coordinate.
    * @param clientY - Viewport-space y coordinate.
@@ -778,7 +864,12 @@ export function createAnchorTagger(elements: AnchorTaggerElements): AnchorTagger
    * @param label - Human-friendly anchor label.
    * @param surface - Selected surface classification.
    */
-  function addAnchor(point: Vector3, label: string, surface: string) {
+  function addAnchor(
+    point: Vector3,
+    label: string,
+    surface: string,
+    id = Date.now() + Math.random(),
+  ) {
     const scale = sceneScale;
     const group = new Group();
     const sphere = new Mesh(
@@ -808,7 +899,7 @@ export function createAnchorTagger(elements: AnchorTaggerElements): AnchorTagger
     group.position.copy(point);
     scene.add(group);
     anchors.push({
-      id: Date.now() + Math.random(),
+      id,
       label,
       mesh: group,
       position: toAnchorPosition(point),
@@ -817,7 +908,6 @@ export function createAnchorTagger(elements: AnchorTaggerElements): AnchorTagger
       stem,
       surface,
     });
-    syncPropCountInput();
     updateUi();
     requestRender();
   }
@@ -839,7 +929,6 @@ export function createAnchorTagger(elements: AnchorTaggerElements): AnchorTagger
 
     scene.remove(anchor.mesh);
     disposeAnchor(anchor);
-    syncPropCountInput();
     updateUi();
     requestRender();
   }
@@ -855,7 +944,6 @@ export function createAnchorTagger(elements: AnchorTaggerElements): AnchorTagger
 
     scene.remove(anchor.mesh);
     disposeAnchor(anchor);
-    syncPropCountInput();
     updateUi();
     requestRender();
   }
@@ -877,7 +965,6 @@ export function createAnchorTagger(elements: AnchorTaggerElements): AnchorTagger
     }
     anchors = [];
     clearPropModels();
-    syncPropCountInput();
     updateUi();
     requestRender();
   }
@@ -896,39 +983,45 @@ export function createAnchorTagger(elements: AnchorTaggerElements): AnchorTagger
   }
 
   /**
-   * Mirrors current anchor state into the sidebar and HUD.
+   * Removes all current anchors without prompting.
+   * @remarks Room anchor imports replace the entire active set, so this path intentionally skips the old editor confirmation flow.
    */
-  function updateUi() {
-    const count = anchors.length;
-    elements.anchorCountPill.style.display = count ? "block" : "none";
-    elements.anchorCountPill.textContent = `${count} anchor${count === 1 ? "" : "s"} tagged`;
-    elements.hudAnchors.textContent = count ? `${count} anchors` : "";
-    elements.taggedCountStat.textContent = count.toString();
-    elements.anchorList.innerHTML = count
-      ? anchors
-          .map(
-            (anchor, index) => `
-<div class="anchor-item" data-anchor-id="${anchor.id}">
-  <div class="anchor-dot"></div>
-  <div class="anchor-body">
-    <div class="anchor-name">${index + 1}. ${escapeHtml(anchor.label)}</div>
-    <div class="anchor-meta">${escapeHtml(anchor.surface)} · ${anchor.position.x}, ${anchor.position.y}, ${anchor.position.z}</div>
-  </div>
-  <button class="anchor-del" type="button" data-remove-anchor="${anchor.id}">x</button>
-</div>`,
-          )
-          .join("")
-      : `<div class="empty-msg">${DEFAULT_EMPTY_STATE}</div>`;
-    elements.pointCountStat.textContent = sourceRayCount ? sourceRayCount.toLocaleString() : "—";
+  function resetAnchors() {
+    for (const anchor of anchors) {
+      scene.remove(anchor.mesh);
+      disposeAnchor(anchor);
+    }
+    anchors = [];
+    importedAnchorCount = 0;
+    updateUi();
+    requestRender();
   }
 
   /**
-   * Escapes user-provided strings before injecting them into `innerHTML`.
-   * @param value - Raw label or surface text.
-   * @returns HTML-safe string content.
+   * Records the provided imported room anchor set without rendering authoring markers.
+   * @param anchorSet - Active room anchor payload, or null when the selected room has none.
+   * @remarks The MVP viewer still uses imported anchors for placement generation, but the
+   * user-facing viewer no longer exposes anchor points in the world or sidebar.
    */
-  function escapeHtml(value: string) {
-    return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  function setAnchorSet(anchorSet: RoomAnchorSet | null) {
+    resetAnchors();
+    activeAnchorSet = anchorSet;
+    importedAnchorCount = anchorSet?.anchors.length ?? 0;
+    updateUi();
+    requestRender();
+  }
+
+  /**
+   * Mirrors viewer stats into the sidebar without exposing anchor details.
+   */
+  function updateUi() {
+    const count = importedAnchorCount;
+    elements.anchorCountPill.style.display = count ? "block" : "none";
+    elements.anchorCountPill.textContent = `${count} anchor${count === 1 ? "" : "s"} imported`;
+    elements.hudAnchors.textContent = "";
+    elements.taggedCountStat.textContent = count.toString();
+    elements.anchorList.innerHTML = `<div class="empty-msg">${DEFAULT_EMPTY_STATE}</div>`;
+    elements.pointCountStat.textContent = sourceRayCount ? sourceRayCount.toLocaleString() : "—";
   }
 
   /**
@@ -1047,14 +1140,14 @@ export function createAnchorTagger(elements: AnchorTaggerElements): AnchorTagger
       rayCloud = new Points(rayGeometry, new PointsMaterial({ visible: false }));
       scene.add(rayCloud);
 
+      sceneContentOffset.set(-cx, -cy, -cz);
       ensureSparkShaderChunk();
       const SplatMesh = await loadSparkSplatMesh();
-      console.info("[anchor-tagger] Creating Spark SplatMesh.");
-      splatMesh = new SplatMesh({ fileBytes, fileName: file.name });
-      splatMesh.position.set(-cx, -cy, -cz);
+      const splatMesh = new SplatMesh({ fileBytes, fileName: file.name });
+      splatMesh.position.copy(sceneContentOffset);
+      scenePointCloud = splatMesh;
       scene.add(splatMesh);
       await withDebugTimeout("splatMesh.initialized", splatMesh.initialized);
-      console.info("[anchor-tagger] Spark SplatMesh initialized.");
 
       orbit.r = sceneScale * 1.5;
       orbit.phi = 1.1;
@@ -1075,6 +1168,9 @@ export function createAnchorTagger(elements: AnchorTaggerElements): AnchorTagger
       elements.fileLoaded.style.display = "block";
       updateUi();
       hideLoading();
+      if (currentPlacements.length) {
+        await renderPlacements(currentPlacements);
+      }
       requestRender();
     } catch (error) {
       hideLoading();
@@ -1090,12 +1186,22 @@ export function createAnchorTagger(elements: AnchorTaggerElements): AnchorTagger
   }
 
   /**
-   * Removes currently loaded splat and raycast point data before loading a new file.
+   * Removes currently loaded scene geometry and raycast point data before loading a new file.
    */
   function disposeLoadedSceneMeshes() {
-    if (splatMesh) {
-      scene.remove(splatMesh);
-      splatMesh = null;
+    if (scenePointCloud) {
+      scene.remove(scenePointCloud);
+      if ("geometry" in scenePointCloud && scenePointCloud.geometry) {
+        scenePointCloud.geometry.dispose();
+      }
+      if ("material" in scenePointCloud && scenePointCloud.material) {
+        if (Array.isArray(scenePointCloud.material)) {
+          scenePointCloud.material.forEach((material) => material.dispose());
+        } else {
+          scenePointCloud.material.dispose();
+        }
+      }
+      scenePointCloud = null;
     }
     if (rayCloud) {
       scene.remove(rayCloud);
@@ -1105,6 +1211,7 @@ export function createAnchorTagger(elements: AnchorTaggerElements): AnchorTagger
     }
     sourceRayPositions = null;
     sourceRayCount = 0;
+    sceneContentOffset.set(0, 0, 0);
   }
 
   /**
@@ -1135,27 +1242,16 @@ export function createAnchorTagger(elements: AnchorTaggerElements): AnchorTagger
   }
 
   /**
-   * Parses Spark's SPZ point positions from a gzipped file buffer.
+   * Parses SPZ point positions from a gzipped file buffer.
    * @param buffer - Raw `.spz` bytes.
    * @returns Centerable point positions and point count.
+   * @remarks The viewer uses the stable `pako` path directly because native decompression repeatedly stalls in the current browser environment.
    */
   async function parseSpzPositions(buffer: ArrayBuffer) {
-    let decompressed: ArrayBuffer;
-    try {
-      console.info("[anchor-tagger] Attempting native gzip decompression for SPZ.");
-      decompressed = await withDebugTimeout("decompressNative", decompressNative(buffer));
-      console.info("[anchor-tagger] Native gzip decompression completed.", {
-        byteLength: decompressed.byteLength,
-      });
-    } catch (error) {
-      console.warn("[anchor-tagger] Native gzip decompression failed, falling back to pako.", {
-        error,
-      });
-      decompressed = decompressPako(buffer);
-      console.info("[anchor-tagger] Pako gzip decompression completed.", {
-        byteLength: decompressed.byteLength,
-      });
-    }
+    const decompressed = decompressPako(buffer);
+    console.info("[anchor-tagger] Pako gzip decompression completed.", {
+      byteLength: decompressed.byteLength,
+    });
 
     const bytes = new Uint8Array(decompressed);
     const view = new DataView(decompressed);
@@ -1170,6 +1266,7 @@ export function createAnchorTagger(elements: AnchorTaggerElements): AnchorTagger
     }
 
     const positions = new Float32Array(numPoints * 3);
+    const colors = new Float32Array(numPoints * 3);
     const positionScale = 1 / (1 << fractBits);
     for (let index = 0; index < numPoints; index += 1) {
       const offset = 16 + index * 9;
@@ -1178,7 +1275,16 @@ export function createAnchorTagger(elements: AnchorTaggerElements): AnchorTagger
       positions[index * 3 + 2] = readSigned24(bytes, offset + 6) * positionScale;
     }
 
-    return { count: numPoints, positions };
+    const alphaOffset = 16 + numPoints * 9;
+    const colorOffset = alphaOffset + numPoints;
+    for (let index = 0; index < numPoints; index += 1) {
+      const offset = colorOffset + index * 3;
+      colors[index * 3] = (bytes[offset] ?? 191) / 255;
+      colors[index * 3 + 1] = (bytes[offset + 1] ?? 212) / 255;
+      colors[index * 3 + 2] = (bytes[offset + 2] ?? 255) / 255;
+    }
+
+    return { colors, count: numPoints, positions };
   }
 
   /**
@@ -1193,45 +1299,6 @@ export function createAnchorTagger(elements: AnchorTaggerElements): AnchorTagger
       value |= 0xff000000;
     }
     return value | 0;
-  }
-
-  /**
-   * Inflates a gzip buffer through the browser-native decompression stream.
-   * @param buffer - Compressed SPZ bytes.
-   * @returns Decompressed payload buffer.
-   */
-  async function decompressNative(buffer: ArrayBuffer) {
-    if (typeof DecompressionStream === "undefined") {
-      throw new Error("No DecompressionStream");
-    }
-
-    const stream = new DecompressionStream("gzip");
-    const writer = stream.writable.getWriter();
-    await writer.write(buffer);
-    await writer.close();
-
-    const reader = stream.readable.getReader();
-    const chunks: Uint8Array[] = [];
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) {
-        break;
-      }
-      chunks.push(value);
-    }
-
-    const total = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
-    const output = new Uint8Array(total);
-    let offset = 0;
-    for (const chunk of chunks) {
-      output.set(chunk, offset);
-      offset += chunk.length;
-    }
-    console.info("[anchor-tagger] Native decompression stream finished.", {
-      chunkCount: chunks.length,
-      totalBytes: total,
-    });
-    return output.buffer;
   }
 
   /**
@@ -1293,18 +1360,53 @@ export function createAnchorTagger(elements: AnchorTaggerElements): AnchorTagger
     const xIndex = properties.findIndex((property) => property.name === "x");
     const yIndex = properties.findIndex((property) => property.name === "y");
     const zIndex = properties.findIndex((property) => property.name === "z");
+    const rIndex = properties.findIndex(
+      (property) => property.name === "red" || property.name === "r",
+    );
+    const gIndex = properties.findIndex(
+      (property) => property.name === "green" || property.name === "g",
+    );
+    const bIndex = properties.findIndex(
+      (property) => property.name === "blue" || property.name === "b",
+    );
     if (xIndex < 0 || yIndex < 0 || zIndex < 0) {
       throw new Error("PLY vertex properties must include x, y, and z.");
     }
 
     const positions = new Float32Array(vertexCount * 3);
+    const colors = new Float32Array(vertexCount * 3);
+    fillDefaultPointColors(colors);
     if (format === "ascii") {
-      parseAsciiPlyPositions(buffer, vertexCount, positions, xIndex, yIndex, zIndex);
-      return { count: vertexCount, positions };
+      parseAsciiPlyPositions(
+        buffer,
+        vertexCount,
+        positions,
+        colors,
+        xIndex,
+        yIndex,
+        zIndex,
+        rIndex,
+        gIndex,
+        bIndex,
+      );
+      return { colors, count: vertexCount, positions };
     }
 
-    parseBinaryPlyPositions(buffer, header, format, properties, positions, xIndex, yIndex, zIndex);
-    return { count: vertexCount, positions };
+    parseBinaryPlyPositions(
+      buffer,
+      header,
+      format,
+      properties,
+      positions,
+      colors,
+      xIndex,
+      yIndex,
+      zIndex,
+      rIndex,
+      gIndex,
+      bIndex,
+    );
+    return { colors, count: vertexCount, positions };
   }
 
   /**
@@ -1320,9 +1422,13 @@ export function createAnchorTagger(elements: AnchorTaggerElements): AnchorTagger
     buffer: ArrayBuffer,
     vertexCount: number,
     positions: Float32Array,
+    colors: Float32Array,
     xIndex: number,
     yIndex: number,
     zIndex: number,
+    rIndex: number,
+    gIndex: number,
+    bIndex: number,
   ) {
     const body = new TextDecoder().decode(new Uint8Array(buffer));
     const start = body.indexOf("end_header\n") + "end_header\n".length;
@@ -1332,6 +1438,7 @@ export function createAnchorTagger(elements: AnchorTaggerElements): AnchorTagger
       positions[index * 3] = Number.parseFloat(values[xIndex] ?? "0");
       positions[index * 3 + 1] = Number.parseFloat(values[yIndex] ?? "0");
       positions[index * 3 + 2] = Number.parseFloat(values[zIndex] ?? "0");
+      assignNormalizedColorFromRow(colors, index, values, rIndex, gIndex, bIndex);
     }
   }
 
@@ -1352,9 +1459,13 @@ export function createAnchorTagger(elements: AnchorTaggerElements): AnchorTagger
     format: "big" | "little",
     properties: Array<{ name: string; type: string }>,
     positions: Float32Array,
+    colors: Float32Array,
     xIndex: number,
     yIndex: number,
     zIndex: number,
+    rIndex: number,
+    gIndex: number,
+    bIndex: number,
   ) {
     const sizeByType: Record<string, number> = {
       char: 1,
@@ -1420,7 +1531,96 @@ export function createAnchorTagger(elements: AnchorTaggerElements): AnchorTagger
       positions[index * 3] = readValue(rowOffset, xIndex);
       positions[index * 3 + 1] = readValue(rowOffset, yIndex);
       positions[index * 3 + 2] = readValue(rowOffset, zIndex);
+      assignNormalizedColor(
+        colors,
+        index,
+        rIndex >= 0 ? Number(readValue(rowOffset, rIndex)) : undefined,
+        gIndex >= 0 ? Number(readValue(rowOffset, gIndex)) : undefined,
+        bIndex >= 0 ? Number(readValue(rowOffset, bIndex)) : undefined,
+      );
     }
+  }
+
+  /**
+   * Fills one color buffer with the viewer's fallback room tint.
+   * @param colors - Output RGB buffer in normalized float form.
+   * @remarks Provides a stable fallback when scene files omit per-point color data.
+   */
+  function fillDefaultPointColors(colors: Float32Array) {
+    for (let index = 0; index < colors.length; index += 3) {
+      colors[index] = 191 / 255;
+      colors[index + 1] = 212 / 255;
+      colors[index + 2] = 255 / 255;
+    }
+  }
+
+  /**
+   * Writes one normalized RGB triplet into the shared point-color buffer.
+   * @param colors - Output RGB buffer in normalized float form.
+   * @param pointIndex - Vertex index whose color should be assigned.
+   * @param red - Optional red channel in byte or float form.
+   * @param green - Optional green channel in byte or float form.
+   * @param blue - Optional blue channel in byte or float form.
+   * @remarks PLY color channels may arrive as either bytes or floats, so this helper normalizes both cases consistently.
+   */
+  function assignNormalizedColor(
+    colors: Float32Array,
+    pointIndex: number,
+    red?: number,
+    green?: number,
+    blue?: number,
+  ) {
+    if (red === undefined || green === undefined || blue === undefined) {
+      return;
+    }
+
+    const offset = pointIndex * 3;
+    colors[offset] = normalizeColorChannel(red);
+    colors[offset + 1] = normalizeColorChannel(green);
+    colors[offset + 2] = normalizeColorChannel(blue);
+  }
+
+  /**
+   * Reads optional RGB values out of one parsed ASCII PLY row and normalizes them.
+   * @param colors - Output RGB buffer in normalized float form.
+   * @param pointIndex - Vertex index whose color should be assigned.
+   * @param values - Tokenized ASCII PLY row.
+   * @param rIndex - Column index for red, or `-1` when absent.
+   * @param gIndex - Column index for green, or `-1` when absent.
+   * @param bIndex - Column index for blue, or `-1` when absent.
+   */
+  function assignNormalizedColorFromRow(
+    colors: Float32Array,
+    pointIndex: number,
+    values: string[],
+    rIndex: number,
+    gIndex: number,
+    bIndex: number,
+  ) {
+    assignNormalizedColor(
+      colors,
+      pointIndex,
+      rIndex >= 0 ? Number.parseFloat(values[rIndex] ?? "") : undefined,
+      gIndex >= 0 ? Number.parseFloat(values[gIndex] ?? "") : undefined,
+      bIndex >= 0 ? Number.parseFloat(values[bIndex] ?? "") : undefined,
+    );
+  }
+
+  /**
+   * Normalizes one color channel that may be stored as either a byte or a unit float.
+   * @param value - Raw color channel value from SPZ or PLY data.
+   * @returns The channel in the `[0, 1]` range expected by Three.js vertex colors.
+   */
+  function normalizeColorChannel(value: number) {
+    if (!Number.isFinite(value)) {
+      return 0;
+    }
+
+    if (value <= 1) {
+      return Math.max(0, Math.min(1, value));
+    }
+
+    return Math.max(0, Math.min(1, value / 255));
   }
 
   /**
@@ -1550,11 +1750,11 @@ export function createAnchorTagger(elements: AnchorTaggerElements): AnchorTagger
     box.getSize(size);
     box.getCenter(center);
     root.position.sub(center);
-    root.position.y += size.y * 0.5;
 
     const maxDimension = Math.max(size.x, size.y, size.z) || 1;
     const scale = getAnchorVisualSize() / maxDimension;
     root.scale.setScalar(scale);
+    root.position.y += size.y * 0.5 * scale;
     root.updateMatrixWorld(true);
   }
 
@@ -1671,13 +1871,321 @@ export function createAnchorTagger(elements: AnchorTaggerElements): AnchorTagger
    */
   function clearPropModels() {
     for (const root of placedPropRoots) {
-      scene.remove(root);
+      root.removeFromParent();
     }
     for (const mesh of placedPropInstancedMeshes) {
-      scene.remove(mesh);
+      mesh.removeFromParent();
     }
     placedPropRoots = [];
     placedPropInstancedMeshes = [];
+    requestRender();
+  }
+
+  /**
+   * Normalizes one placement asset URL to the same-origin proxy path expected by the viewer.
+   * @param assetUrl - Placement asset URL returned by the placement payload.
+   * @returns Same-origin asset URL safe for `GLTFLoader` browser fetches.
+   * @remarks Some running clients can still receive absolute storage URLs from stale server code, so the viewer defensively rewrites them through the proxy.
+   */
+  function normalizePlacementAssetUrl(assetUrl: string) {
+    if (!assetUrl) {
+      return assetUrl;
+    }
+
+    if (assetUrl.startsWith("/api/game/asset?")) {
+      return assetUrl;
+    }
+
+    if (/^https?:\/\//iu.test(assetUrl)) {
+      return `/api/game/asset?url=${encodeURIComponent(assetUrl)}`;
+    }
+
+    return assetUrl;
+  }
+
+  /**
+   * Loads and caches a GLB scene used by one or more generated concept placements.
+   * @param assetUrl - Public asset URL returned by the asset-generation pipeline.
+   * @returns A reusable scene root for later cloning.
+   * @remarks Promise caching prevents repeated network fetches when multiple placements reference the same generated asset.
+   */
+  async function loadPlacementAssetScene(assetUrl: string) {
+    const normalizedAssetUrl = normalizePlacementAssetUrl(assetUrl);
+    let promise = placementAssetPromises.get(normalizedAssetUrl);
+    if (!promise) {
+      promise = gltfLoader.loadAsync(normalizedAssetUrl).then((gltf) => gltf.scene);
+      placementAssetPromises.set(normalizedAssetUrl, promise);
+    }
+    return promise;
+  }
+
+  /**
+   * Applies the current room-scene recentering offset to one imported anchor position.
+   * @param placement - Generated placement anchored in the source room coordinate space.
+   * @returns World position aligned to the currently loaded centered room scene.
+   * @remarks Scene files are shifted by their centroid on load, so placements must receive the same translation or they drift away from the room.
+   */
+  function getPlacementWorldPosition(placement: RoomPlacementItem) {
+    return new Vector3(
+      placement.position.x + sceneContentOffset.x,
+      placement.position.y + sceneContentOffset.y,
+      placement.position.z + sceneContentOffset.z,
+    );
+  }
+
+  /**
+   * Snaps one placement position to the visible sampled room surface near the anchor.
+   * @param placement - Placement metadata anchored in the imported room coordinate space.
+   * @returns World position whose Y value is derived from the loaded room surface when available.
+   * @remarks Imported anchor heights are not reliable enough on their own, so floor placement uses the sampled point cloud as the final support surface.
+   */
+  function getSnappedPlacementWorldPosition(placement: RoomPlacementItem) {
+    const worldPosition = getPlacementWorldPosition(placement);
+    if (!rayCloud) {
+      return worldPosition;
+    }
+
+    const positions = rayCloud.geometry.getAttribute("position");
+    if (!positions) {
+      return worldPosition;
+    }
+
+    const targetSize = getPlacementTargetSize(placement);
+    const searchRadius = Math.max(targetSize * 0.9, sceneScale * 0.02);
+    const fallbackRadius = Math.max(targetSize * 1.8, sceneScale * 0.04);
+    const upwardTolerance = Math.max(targetSize * 0.75, sceneScale * 0.04);
+    const downwardTolerance = Math.max(targetSize * 0.18, sceneScale * 0.015);
+    let bestSupportY = Infinity;
+    let bestSupportHorizontalDistanceSq = Infinity;
+    let foundSupportPoint = false;
+    let nearestDistanceSq = Infinity;
+    let nearestY = worldPosition.y;
+
+    for (let index = 0; index < positions.count; index += 1) {
+      const pointX = positions.getX(index);
+      const pointY = positions.getY(index);
+      const pointZ = positions.getZ(index);
+      const dx = pointX - worldPosition.x;
+      const dz = pointZ - worldPosition.z;
+      const horizontalDistanceSq = dx * dx + dz * dz;
+
+      if (horizontalDistanceSq <= searchRadius * searchRadius) {
+        const verticalDelta = pointY - worldPosition.y;
+        if (verticalDelta >= -downwardTolerance && verticalDelta <= upwardTolerance) {
+          const isBetterSupport =
+            pointY < bestSupportY ||
+            (Math.abs(pointY - bestSupportY) < 1e-4 &&
+              horizontalDistanceSq < bestSupportHorizontalDistanceSq);
+
+          if (isBetterSupport) {
+            bestSupportY = pointY;
+            bestSupportHorizontalDistanceSq = horizontalDistanceSq;
+            foundSupportPoint = true;
+          }
+        }
+      }
+
+      if (
+        horizontalDistanceSq <= fallbackRadius * fallbackRadius &&
+        horizontalDistanceSq < nearestDistanceSq
+      ) {
+        nearestDistanceSq = horizontalDistanceSq;
+        nearestY = pointY;
+      }
+    }
+
+    if (foundSupportPoint) {
+      worldPosition.y = bestSupportY;
+      return worldPosition;
+    }
+
+    if (nearestDistanceSq < Infinity) {
+      worldPosition.y = nearestY;
+    }
+
+    return worldPosition;
+  }
+
+  /**
+   * Normalizes one generated placement model so it is centered, grounded, and visible at anchor scale.
+   * @param root - Cloned GLB scene root for one placement.
+   * @returns `true` when the model produced a finite bounding box and was normalized successfully.
+   * @remarks TRELLIS outputs can vary wildly in root offset and scale, so placements reuse the stable prototype normalization path before entering the room.
+   */
+  function normalizePlacementRoot(root: Object3D, placement: RoomPlacementItem) {
+    root.updateMatrixWorld(true);
+    const initialBox = new Box3().setFromObject(root);
+    if (initialBox.isEmpty()) {
+      return false;
+    }
+
+    const size = new Vector3();
+    const center = new Vector3();
+    initialBox.getSize(size);
+    initialBox.getCenter(center);
+    const maxDimension = Math.max(size.x, size.y, size.z);
+    if (!Number.isFinite(maxDimension) || maxDimension <= 0) {
+      return false;
+    }
+
+    root.position.sub(center);
+    const scale = getPlacementTargetSize(placement) / maxDimension;
+    root.scale.setScalar(scale);
+    root.updateMatrixWorld(true);
+
+    const groundedBox = new Box3().setFromObject(root);
+    if (groundedBox.isEmpty()) {
+      return false;
+    }
+
+    const groundedSize = new Vector3();
+    groundedBox.getSize(groundedSize);
+    const clearance = getPlacementClearance(placement, groundedSize.y);
+    root.position.y += -groundedBox.min.y + clearance;
+    root.updateMatrixWorld(true);
+    return true;
+  }
+
+  /**
+   * Returns whether one placement targets a floor-like support surface.
+   * @param placement - Placement metadata including the semantic anchor surface label.
+   * @returns `true` when the anchor label describes a surface that tends to visually absorb meshes.
+   * @remarks Floor splats render with noticeable thickness, so those placements need more aggressive lift and depth bias than wall or shelf anchors.
+   */
+  function isFloorLikePlacement(placement: RoomPlacementItem) {
+    const surface = placement.surface.trim().toLowerCase();
+    return (
+      surface.length === 0 ||
+      surface === "surface" ||
+      surface.includes("floor") ||
+      surface.includes("rug") ||
+      surface.includes("carpet") ||
+      surface.includes("ground") ||
+      surface.includes("stair") ||
+      surface.includes("step")
+    );
+  }
+
+  /**
+   * Returns the local target size for one generated placement.
+   * @param placement - Placement metadata used to look up nearby anchors.
+   * @returns Maximum desired object dimension in room-space units.
+   * @remarks Scaling from nearest-anchor spacing is more stable than scaling from whole-room extent because it keeps objects small enough for the actual anchor density.
+   */
+  function getPlacementTargetSize(placement: RoomPlacementItem) {
+    const anchors = activeAnchorSet?.anchors ?? [];
+    const currentAnchor = anchors.find((anchor) => anchor.id === placement.anchorId);
+    if (!currentAnchor || anchors.length <= 1) {
+      return Math.max(sceneScale * 0.02, Math.min(sceneScale * 0.035, getAnchorVisualSize() * 1.2));
+    }
+
+    let nearestDistance = Infinity;
+    for (const anchor of anchors) {
+      if (anchor.id === currentAnchor.id) {
+        continue;
+      }
+
+      const distance = Math.hypot(
+        currentAnchor.position.x - anchor.position.x,
+        currentAnchor.position.y - anchor.position.y,
+        currentAnchor.position.z - anchor.position.z,
+      );
+      nearestDistance = Math.min(nearestDistance, distance);
+    }
+
+    if (!Number.isFinite(nearestDistance)) {
+      return Math.max(sceneScale * 0.02, Math.min(sceneScale * 0.035, getAnchorVisualSize() * 1.2));
+    }
+
+    return Math.max(sceneScale * 0.02, Math.min(nearestDistance * 0.3, sceneScale * 0.035));
+  }
+
+  /**
+   * Returns the additional vertical clearance used after grounding a generated placement.
+   * @param placement - Placement metadata including the semantic surface label.
+   * @param height - Post-scale placement height.
+   * @returns Upward offset that keeps objects visibly above dense scanned surfaces.
+   * @remarks Floor-like anchors need a slightly larger buffer because splat surfaces render with thickness and can visually swallow thin meshes.
+   */
+  function getPlacementClearance(placement: RoomPlacementItem, height: number) {
+    const baseClearance = Math.max(height * 0.06, sceneScale * 0.004);
+    if (!isFloorLikePlacement(placement)) {
+      return baseClearance;
+    }
+
+    return Math.max(height * 0.1, sceneScale * 0.008);
+  }
+
+  /**
+   * Applies mesh-level render bias for one generated placement.
+   * @param root - Placement root whose renderable meshes should be tuned.
+   * @param placement - Placement metadata describing the target support surface.
+   * @remarks Floor placements receive polygon offset so the room splat is less likely to visually cut through them at close depth values.
+   */
+  function configurePlacementRendering(root: Object3D, placement: RoomPlacementItem) {
+    const floorLikePlacement = isFloorLikePlacement(placement);
+    root.userData.roomPlacement = placement;
+    root.traverse((object) => {
+      const mesh = object as Mesh;
+      object.userData.roomPlacement = placement;
+      if (!(mesh as any).isMesh) {
+        return;
+      }
+
+      object.renderOrder = floorLikePlacement ? 4 : 3;
+      const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      for (const material of materials) {
+        if (!material) {
+          continue;
+        }
+
+        material.side = DoubleSide;
+        material.depthTest = true;
+        material.depthWrite = true;
+        material.polygonOffset = floorLikePlacement;
+        material.polygonOffsetFactor = floorLikePlacement ? -2 : 0;
+        material.polygonOffsetUnits = floorLikePlacement ? -4 : 0;
+      }
+    });
+  }
+
+  /**
+   * Renders the current set of generated object placements.
+   * @param placements - Generated concept asset placements selected for the active room.
+   * @remarks Individual asset load failures are logged and skipped so room viewability is never blocked by one broken model URL.
+   */
+  async function renderPlacements(placements: RoomPlacementItem[]) {
+    currentPlacements = [...placements];
+    clearPropModels();
+    placementInspectListener?.(null);
+
+    for (const placement of placements) {
+      try {
+        const template = await loadPlacementAssetScene(placement.assetUrl);
+        const root = cloneSkinned(template);
+        const normalized = normalizePlacementRoot(root, placement);
+        if (!normalized) {
+          console.warn("[anchor-tagger] Placement asset produced an empty bounding box.", {
+            assetUrl: placement.assetUrl,
+            conceptId: placement.conceptId,
+          });
+        }
+        configurePlacementRendering(root, placement);
+        const worldPosition = getSnappedPlacementWorldPosition(placement);
+        root.position.add(worldPosition);
+        root.rotation.y = Math.random() * Math.PI * 2;
+        root.updateMatrixWorld(true);
+        scene.add(root);
+        placedPropRoots.push(root);
+      } catch (error) {
+        console.error("[anchor-tagger] Failed to load placement asset.", {
+          assetUrl: placement.assetUrl,
+          conceptId: placement.conceptId,
+          error,
+        });
+      }
+    }
+
     requestRender();
   }
 
@@ -1776,18 +2284,6 @@ export function createAnchorTagger(elements: AnchorTaggerElements): AnchorTagger
       mousedownX = event.clientX;
       mousedownY = event.clientY;
 
-      if (mode === "place") {
-        const hit = pickAnchor(event.clientX, event.clientY);
-        if (hit) {
-          draggedAnchor = hit;
-          isDraggingAnchor = true;
-          lastDragUiUpdate = 0;
-          pendingDragPointer = { x: event.clientX, y: event.clientY };
-          requestRender();
-        }
-        return;
-      }
-
       viewportDragging = true;
       rightButton = event.button === 2;
       viewportMouseX = event.clientX;
@@ -1796,27 +2292,25 @@ export function createAnchorTagger(elements: AnchorTaggerElements): AnchorTagger
       requestRender();
     }) as EventListener);
 
-    addListener(canvas, "click", onViewportClick as EventListener);
+    addListener(canvas, "click", ((event: MouseEvent) => {
+      if (Math.abs(event.clientX - mousedownX) > 5 || Math.abs(event.clientY - mousedownY) > 5) {
+        return;
+      }
+
+      const placement = pickPlacement(event.clientX, event.clientY);
+      placementInspectListener?.(placement ? toPlacementInspection(placement) : null);
+    }) as EventListener);
     addListener(canvas, "contextmenu", ((event: Event) => event.preventDefault()) as EventListener);
 
     addListener(window, "mouseup", (() => {
-      const wasDraggingAnchor = isDraggingAnchor;
       isDraggingAnchor = false;
       draggedAnchor = null;
       pendingDragPointer = null;
       viewportDragging = false;
-      if (wasDraggingAnchor) {
-        updateUi();
-      }
       requestRender();
     }) as EventListener);
 
     addListener(window, "mousemove", ((event: MouseEvent) => {
-      if (isDraggingAnchor && draggedAnchor && rayCloud) {
-        pendingDragPointer = { x: event.clientX, y: event.clientY };
-        requestRender();
-        return;
-      }
       if (!viewportDragging) {
         return;
       }
@@ -1841,6 +2335,7 @@ export function createAnchorTagger(elements: AnchorTaggerElements): AnchorTagger
     }) as EventListener);
 
     addListener(canvas, "wheel", ((event: WheelEvent) => {
+      event.preventDefault();
       orbit.r = Math.max(0.01, orbit.r * (1 + event.deltaY * 0.001));
       updateCamera();
       requestRender();
@@ -1898,16 +2393,6 @@ export function createAnchorTagger(elements: AnchorTaggerElements): AnchorTagger
       if (setMoveKeyState(event.key, true)) {
         event.preventDefault();
         requestRender();
-        return;
-      }
-      if (event.key === "p" || event.key === "P") {
-        setMode(mode === "place" ? "orbit" : "place");
-      }
-      if (event.key === "Escape") {
-        setMode("orbit");
-      }
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
-        undoLast();
       }
     }) as EventListener);
     addListener(window, "keyup", ((event: KeyboardEvent) => {
@@ -1924,42 +2409,46 @@ export function createAnchorTagger(elements: AnchorTaggerElements): AnchorTagger
       }
       elements.fileInput.value = "";
     }) as EventListener);
-    addListener(elements.propFileInput, "change", (() => {
-      const file = elements.propFileInput.files?.[0];
-      if (file) {
-        void loadPropFile(file);
-      }
-      elements.propFileInput.value = "";
-    }) as EventListener);
     addListener(elements.dropzone, "click", (() => elements.fileInput.click()) as EventListener);
-    addListener(elements.btnLoadProp, "click", (() =>
-      elements.propFileInput.click()) as EventListener);
-    addListener(elements.btnOrbit, "click", (() => setMode("orbit")) as EventListener);
-    addListener(elements.btnPlace, "click", (() => setMode("place")) as EventListener);
     addListener(elements.btnPerf, "click", togglePerformanceMode as EventListener);
-    addListener(elements.btnScatter, "click", scatterPropModels as EventListener);
-    addListener(elements.btnReroll, "click", rerollPropModels as EventListener);
-    addListener(elements.btnClearProps, "click", clearPropModels as EventListener);
-    addListener(elements.btnExport, "click", exportJson as EventListener);
-    addListener(elements.btnClearAll, "click", clearAll as EventListener);
-    addListener(elements.anchorList, "click", ((event: MouseEvent) => {
-      const target = event.target as HTMLElement | null;
-      const id = target?.getAttribute("data-remove-anchor");
-      if (id) {
-        removeAnchor(Number(id));
-      }
-    }) as EventListener);
   }
+
+  // The remaining editor-only helpers stay in the file to minimize risk around the scene-loading
+  // runtime, but the room viewer intentionally leaves them unreachable.
+  void [
+    setMode,
+    removeAnchor,
+    undoLast,
+    clearAll,
+    exportJson,
+    loadPropFile,
+    rerollPropModels,
+    onViewportClick,
+  ];
 
   initOrbit();
   initDragAndDrop();
   initControls();
-  syncPropCountInput();
+  elements.modeBadge.textContent = "VIEWER";
+  elements.modeBadge.classList.remove("place");
+  renderer.domElement.style.cursor = "default";
   updateUi();
   onResize();
   requestRender();
 
   return {
+    async loadSceneFile(file: File) {
+      await loadSceneFile(file);
+    },
+    async renderPlacements(placements: RoomPlacementItem[]) {
+      await renderPlacements(placements);
+    },
+    setOnPlacementInspect(listener) {
+      placementInspectListener = listener;
+    },
+    setAnchorSet(anchorSet: RoomAnchorSet | null) {
+      setAnchorSet(anchorSet);
+    },
     dispose() {
       for (const { event, handler, target } of listeners) {
         target.removeEventListener(event, handler);
