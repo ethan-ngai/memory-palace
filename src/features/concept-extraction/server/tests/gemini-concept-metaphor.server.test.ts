@@ -11,6 +11,7 @@ describe("generateConceptMetaphorsWithGemini", () => {
     process.env.APP_BASE_URL = "http://localhost:3000";
     process.env.GEMINI_API_KEY = "gemini-key";
     process.env.GEMINI_MODEL = "";
+    process.env.HUGGINGFACE_TOKEN = "hf_test-token";
     process.env.MONGODB_URI = "mongodb://127.0.0.1:27017";
     process.env.MONGODB_DB_NAME = "memory_palace_test";
     process.env.SESSION_COOKIE_SECRET = "x".repeat(32);

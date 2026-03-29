@@ -121,8 +121,12 @@ describe("concept repository", () => {
         createdAt: "2026-03-28T12:00:00.000Z",
       },
       asset: {
-        provider: "gcs",
+        status: "ready",
+        provider: "s3",
+        source: "cube3d",
         key: "assets/neuron.glb",
+        styleVersion: "low-poly-v1",
+        updatedAt: "2026-03-28T12:00:00.000Z",
       },
     });
 

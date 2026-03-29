@@ -29,9 +29,15 @@ Rules:
 - Return one metaphor per concept.
 - Choose a single visually distinctive physical object, not a full scene.
 - Keep the metaphor aligned with the concept meaning, not just the room category.
-- Make the prompt directly usable for a text-to-3D diffusion model.
-- Favor memorable shape, material, silhouette, and iconic details.
-- Avoid unsafe, abstract-only, or overly complex scene prompts.
+- Make the prompt directly usable for a text-to-3D model as a simple object prompt.
+- Keep both objectName and prompt short and concrete.
+- Prefer common everyday object names like "battery", "turbine", "generator", or "conveyor belt".
+- The prompt should usually be a plain noun phrase like "a battery" or "a conveyor belt".
+- Do not add extra descriptive flourishes unless they are essential to the concept.
+- Avoid colors, lighting, camera language, materials, textures, backgrounds, environments, and scene composition unless absolutely necessary.
+- Avoid long descriptive sentences.
+- Avoid adjectives like "large", "glowing", "futuristic", "ornate", "miniature", or "detailed" unless the concept absolutely depends on them.
+- Avoid unsafe, abstract-only, or overly complex prompts.
 - Return strict JSON only.
 `;
 
@@ -107,6 +113,32 @@ function validateMetaphorCoverage(concepts: StoredConcept[], metaphors: unknown[
 }
 
 /**
+ * Removes article prefixes and trailing punctuation from one Gemini object label.
+ * @param objectName - Raw object name returned by Gemini.
+ * @returns A concise noun phrase suitable for reuse in both storage and prompt generation.
+ * @remarks Normalizing here keeps downstream asset prompts stable even when Gemini returns title case or sentence-style labels.
+ */
+function normalizeObjectName(objectName: string) {
+  return objectName
+    .trim()
+    .replace(/^[Aa]n?\s+/u, "")
+    .replace(/[.!?,;:]+$/u, "")
+    .replace(/\s+/gu, " ");
+}
+
+/**
+ * Adds a simple indefinite article to one normalized object phrase.
+ * @param objectPhrase - Plain noun phrase without a leading article.
+ * @returns A short prompt such as `a battery` or `an energy turbine`.
+ * @remarks The TRELLIS backend has been more reliable with plain object prompts than with embellished descriptive phrases.
+ */
+function toPlainObjectPrompt(objectPhrase: string) {
+  const normalized = normalizeObjectName(objectPhrase);
+  const article = /^[aeiou]/iu.test(normalized) ? "an" : "a";
+  return `${article} ${normalized.toLowerCase()}`;
+}
+
+/**
  * Builds the current ready metaphor object written onto a concept document.
  * @param input - Gemini metaphor payload.
  * @returns The normalized current metaphor object.
@@ -117,10 +149,12 @@ function toReadyMetaphor(input: {
   prompt: string;
   rationale: string;
 }): ConceptMetaphor {
+  const objectName = normalizeObjectName(input.objectName);
+
   return {
     status: "ready",
-    objectName: input.objectName,
-    prompt: input.prompt,
+    objectName,
+    prompt: toPlainObjectPrompt(objectName),
     rationale: input.rationale,
     generatedAt: new Date().toISOString(),
   };
@@ -138,7 +172,23 @@ export async function generateConceptMetaphorsForCurrentUser(
   const parsedInput = generateConceptMetaphorsInputSchema.parse(input);
   const conceptIds = validateUniqueConceptIds(parsedInput.conceptIds);
   const user = await requireAuthUser();
-  const concepts = await findConceptsByIdsForUser(user.id, conceptIds);
+  return generateConceptMetaphorsForUser(user.id, { conceptIds });
+}
+
+/**
+ * Generates or regenerates concept metaphors for one explicit user id.
+ * @param userId - Local application user id that owns the concepts.
+ * @param input - Stored concept ids whose current metaphors should be created or replaced.
+ * @returns Updated stored concepts in the same order as the request payload.
+ * @remarks Exported so manual server-side scripts can bootstrap concepts without a browser session.
+ */
+export async function generateConceptMetaphorsForUser(
+  userId: string,
+  input: GenerateConceptMetaphorsInput,
+): Promise<GenerateConceptMetaphorsResult> {
+  const parsedInput = generateConceptMetaphorsInputSchema.parse(input);
+  const conceptIds = validateUniqueConceptIds(parsedInput.conceptIds);
+  const concepts = await findConceptsByIdsForUser(userId, conceptIds);
 
   if (concepts.length !== conceptIds.length) {
     throw new Error("One or more requested concepts were not found for the current user.");

@@ -12,6 +12,7 @@ import { createConceptForUser } from "@/features/concept-extraction/server/conce
 import {
   createRoomForUser,
   incrementRoomConceptCount,
+  incrementRoomConceptCountBySlug,
   listRoomsByUserId,
 } from "@/features/concept-extraction/server/room.repository.server";
 import type {
@@ -42,11 +43,22 @@ export const extractedConceptSchema = z.object({
   description: z.string().trim().min(1),
 });
 
-export const conceptAssetRefSchema = z.object({
-  provider: z.enum(["gcs", "s3", "r2", "local", "unknown"]),
-  key: z.string().min(1),
+export const conceptAssetSchema = z.object({
+  status: z.enum(["pending", "processing", "ready", "failed"]),
+  provider: z.literal("s3"),
+  source: z.enum(["hunyuan", "shap-e", "cube3d", "trellis", "embodiedgen"]),
+  key: z.string().min(1).optional(),
   url: z.string().url().optional(),
+  previewKey: z.string().min(1).optional(),
+  previewUrl: z.string().url().optional(),
   mimeType: z.string().min(1).optional(),
+  prompt: z.string().min(1).optional(),
+  styleVersion: z.string().min(1),
+  jobId: z.string().min(1).optional(),
+  error: z.string().min(1).optional(),
+  startedAt: z.string().datetime().nullable().optional(),
+  completedAt: z.string().datetime().nullable().optional(),
+  updatedAt: z.string().datetime(),
 });
 
 export const conceptEmbeddingSchema = z.object({
@@ -80,7 +92,7 @@ export const storedConceptSchema = z.object({
   }),
   metaphor: conceptMetaphorSchema.nullable(),
   embedding: conceptEmbeddingSchema.nullable(),
-  asset: conceptAssetRefSchema.nullable(),
+  asset: conceptAssetSchema.nullable(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });
@@ -210,7 +222,22 @@ export async function persistConceptsForCurrentUser(
 ): Promise<PersistConceptsResult> {
   const parsedInput = persistConceptsInputSchema.parse(input);
   const user = await requireAuthUser();
-  const existingRooms = await listRoomsByUserId(user.id);
+  return persistConceptsForUser(user.id, parsedInput);
+}
+
+/**
+ * Persists extracted concepts for one explicit user id.
+ * @param userId - Local application user id that should own the stored concepts and rooms.
+ * @param input - Already-extracted concepts ready for room assignment and storage.
+ * @returns Stored concepts plus updated room summaries after classification and persistence.
+ * @remarks Exported so manual server-side scripts can bootstrap end-to-end data without a browser session.
+ */
+export async function persistConceptsForUser(
+  userId: string,
+  input: PersistConceptsInput,
+): Promise<PersistConceptsResult> {
+  const parsedInput = persistConceptsInputSchema.parse(input);
+  const existingRooms = await listRoomsByUserId(userId);
   const assignments = validateAssignments(
     parsedInput.concepts,
     await classifyConceptRoomsWithGemini({
@@ -243,7 +270,7 @@ export async function persistConceptsForCurrentUser(
         if (!room) {
           room = await createRoomForUser(
             {
-              userId: user.id,
+              userId,
               name: assignment.roomName.trim(),
               slug,
               description: assignment.roomDescription?.trim() || "",
@@ -269,7 +296,7 @@ export async function persistConceptsForCurrentUser(
 
         const storedConcept = await createConceptForUser(
           {
-            userId: user.id,
+            userId,
             name: concept.name.trim(),
             description: concept.description.trim(),
             normalizedName: normalizeConceptName(concept.name),
@@ -290,7 +317,19 @@ export async function persistConceptsForCurrentUser(
       }
 
       for (const [roomId, count] of roomCounts) {
-        const updatedRoom = await incrementRoomConceptCount(roomId, count, session);
+        const room = roomsById.get(roomId);
+        let updatedRoom;
+
+        try {
+          updatedRoom = await incrementRoomConceptCount(roomId, count, session);
+        } catch (error) {
+          if (!(error instanceof Error) || !error.message.includes("no longer exists") || !room) {
+            throw error;
+          }
+
+          updatedRoom = await incrementRoomConceptCountBySlug(userId, room.slug, count, session);
+        }
+
         roomsById.set(updatedRoom.id, updatedRoom);
         roomsBySlug.set(updatedRoom.slug, updatedRoom);
       }

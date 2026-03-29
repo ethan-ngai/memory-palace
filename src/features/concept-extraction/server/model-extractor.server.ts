@@ -1,6 +1,6 @@
 /**
  * @file model-extractor.server.ts
- * @description Sends cleaned study material to the configured model provider and repairs structured output when possible.
+ * @description Sends cleaned study material to K2 for text and Gemini for PDFs, then repairs structured output when needed.
  * @module concept-extraction
  */
 import { z } from "zod";
@@ -8,7 +8,7 @@ import { getServerEnv } from "@/lib/env/server";
 import { conceptArraySchema } from "@/features/concept-extraction/server/concept-extraction.schemas";
 import type { Concept, ExtractionInput } from "@/features/concept-extraction/types";
 
-type OpenAICompatibleResponse = {
+type K2Response = {
   choices?: Array<{
     message?: {
       content?: string | Array<{ type?: string; text?: string }>;
@@ -26,13 +26,11 @@ type GeminiResponse = {
   }>;
 };
 
-type ModelProvider = "gemini" | "openai-compatible";
-
 /**
- * Prompt used for concept extraction regardless of the backing provider.
- * @description Keeping one prompt string avoids provider drift and makes a later K2 cutover a configuration change instead of a prompt rewrite.
+ * Prompt used for concept extraction across both model backends.
+ * @description Keeps the extraction contract stable even though text and PDF sources route to different providers.
  */
-export const CONCEPT_EXTRACTION_PROMPT = `
+export const K2_CONCEPT_EXTRACTION_PROMPT = `
 You are extracting study concepts from source material.
 
 Return only valid JSON.
@@ -54,7 +52,35 @@ Rules:
 - Do not wrap the JSON in markdown fences.
 `;
 
-const openAICompatibleResponseSchema = z.object({
+/**
+ * Repair prompt used when K2 responds with analysis text instead of the required JSON array.
+ * @description Keeps the recovery step narrow so the model reformats its own answer instead of re-solving the task from scratch.
+ */
+const K2_CONCEPT_REPAIR_PROMPT = `
+You are reformatting a previous model response.
+
+Return only valid JSON.
+The JSON must be an array of objects with this exact shape:
+[
+  {
+    "name": "Concept name",
+    "description": "Clear explanation of the concept"
+  }
+]
+
+Rules:
+- Use only concepts that are already present in the supplied response.
+- Remove analysis, notes, numbering, and commentary.
+- Keep descriptions concise and useful for memorization.
+- Avoid duplicates and near-duplicates.
+- If the supplied response contains no usable concepts, return [].
+- Do not wrap the JSON in markdown fences.
+- Your first character must be [.
+- Your last character must be ].
+- Do not explain the JSON.
+`;
+
+const k2ResponseSchema = z.object({
   choices: z
     .array(
       z.object({
@@ -91,10 +117,9 @@ const geminiResponseSchema = z.object({
 });
 
 /**
- * Derives lightweight source context for the model prompt.
+ * Derives lightweight source context for the K2 prompt.
  * @param input - Original extraction input before ingestion.
  * @returns A short human-readable label describing where the study text came from.
- * @remarks The prompt uses this hint to distinguish direct text from parsed PDF content without creating separate model logic.
  */
 function getSourceContext(input: ExtractionInput) {
   switch (input.type) {
@@ -106,8 +131,8 @@ function getSourceContext(input: ExtractionInput) {
 }
 
 /**
- * Builds the user-facing prompt body shared by all providers.
- * @param cleanedText - Source text after scraping and normalization.
+ * Builds the user-facing prompt body sent to K2.
+ * @param cleanedText - Source text after normalization.
  * @param input - Original extraction input used for context hints.
  * @returns Prompt text to send as the main user turn.
  */
@@ -123,12 +148,12 @@ function buildUserPrompt(cleanedText: string, input: ExtractionInput) {
 }
 
 /**
- * Extracts a text payload from an OpenAI-compatible chat completion response.
+ * Extracts the textual assistant payload from a K2 chat completion response.
  * @param payload - Raw provider response body.
  * @returns Flattened textual content suitable for JSON repair and validation.
  */
-function getOpenAICompatibleMessageContent(payload: OpenAICompatibleResponse) {
-  const parsed = openAICompatibleResponseSchema.parse(payload);
+function getK2MessageContent(payload: K2Response) {
+  const parsed = k2ResponseSchema.parse(payload);
   const content = parsed.choices[0].message.content;
 
   if (typeof content === "string") {
@@ -145,7 +170,6 @@ function getOpenAICompatibleMessageContent(payload: OpenAICompatibleResponse) {
  * Extracts generated text from a Gemini `generateContent` response.
  * @param payload - Raw Gemini response body.
  * @returns Concatenated textual content from the first candidate.
- * @remarks Google documents `candidates[].content.parts[].text` as the standard text path for REST responses.
  */
 function getGeminiMessageContent(payload: GeminiResponse) {
   const parsed = geminiResponseSchema.parse(payload);
@@ -165,22 +189,116 @@ function tryParseConceptArray(raw: string) {
   return null;
 }
 
-function extractFirstJsonArray(raw: string) {
-  const start = raw.indexOf("[");
-  const end = raw.lastIndexOf("]");
+function stripMarkdownCodeFence(raw: string) {
+  const trimmed = raw.trim();
 
-  if (start === -1 || end === -1 || end < start) {
+  if (!trimmed.startsWith("```")) {
+    return trimmed;
+  }
+
+  return trimmed
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/u, "")
+    .trim();
+}
+
+function extractFirstJsonArray(raw: string) {
+  for (let start = 0; start < raw.length; start += 1) {
+    if (raw[start] !== "[") {
+      continue;
+    }
+
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+
+    for (let index = start; index < raw.length; index += 1) {
+      const char = raw[index];
+
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+          continue;
+        }
+
+        if (char === "\\") {
+          escaped = true;
+          continue;
+        }
+
+        if (char === '"') {
+          inString = false;
+        }
+
+        continue;
+      }
+
+      if (char === '"') {
+        inString = true;
+        continue;
+      }
+
+      if (char === "[") {
+        depth += 1;
+        continue;
+      }
+
+      if (char !== "]") {
+        continue;
+      }
+
+      depth -= 1;
+      if (depth !== 0) {
+        continue;
+      }
+
+      const candidate = raw.slice(start, index + 1);
+      try {
+        const parsed = JSON.parse(candidate);
+        const candidateIsWholeResponse = candidate.trim() === raw.trim();
+        if (Array.isArray(parsed) && (parsed.length > 0 || candidateIsWholeResponse)) {
+          return candidate;
+        }
+      } catch {
+        // Keep scanning for the next balanced candidate.
+      }
+    }
+  }
+
+  return null;
+}
+
+function tryExtractConceptArrayFromObject(raw: string) {
+  const parsed = JSON.parse(raw);
+
+  if (!parsed || typeof parsed !== "object") {
     return null;
   }
 
-  return raw.slice(start, end + 1);
+  const candidateKeys = ["concepts", "items", "data"];
+  for (const key of candidateKeys) {
+    if (!(key in parsed)) {
+      continue;
+    }
+
+    const candidate = conceptArraySchema.safeParse(parsed[key as keyof typeof parsed]);
+    if (candidate.success) {
+      return candidate.data;
+    }
+
+    if (Array.isArray(parsed[key as keyof typeof parsed])) {
+      return normalizeConceptRows(parsed[key as keyof typeof parsed]);
+    }
+  }
+
+  return null;
 }
 
 /**
  * Filters parsed JSON down to valid concept rows.
  * @param payload - JSON parsed from the model response or repair path.
  * @returns A schema-validated concept array containing only usable rows.
- * @remarks Some providers emit partially correct arrays; filtering lets the feature recover instead of failing the entire request.
+ * @remarks Some model outputs are partially valid; filtering lets the feature recover instead of failing the whole request.
  */
 function normalizeConceptRows(payload: unknown): Concept[] {
   if (!Array.isArray(payload)) {
@@ -207,13 +325,12 @@ function normalizeConceptRows(payload: unknown): Concept[] {
 }
 
 /**
- * Parses model output into the final concept array, attempting one repair pass when the model adds extra text.
- * @param raw - Raw assistant message content from the configured model provider.
+ * Parses K2 output into the final concept array, attempting one repair pass when the model adds extra text.
+ * @param raw - Raw assistant message content from K2.
  * @returns Validated study concepts or an empty array for `[]`.
- * @remarks The repair logic is intentionally conservative: it only recovers the first JSON array and still revalidates the result.
  */
 function parseConceptsFromModelContent(raw: string) {
-  const trimmed = raw.trim();
+  const trimmed = stripMarkdownCodeFence(raw);
   if (trimmed === "[]") {
     return [] satisfies Concept[];
   }
@@ -225,6 +342,15 @@ function parseConceptsFromModelContent(raw: string) {
     }
   } catch {
     // Fall through to repair path.
+  }
+
+  try {
+    const objectWrapped = tryExtractConceptArrayFromObject(trimmed);
+    if (objectWrapped) {
+      return objectWrapped;
+    }
+  } catch {
+    // Fall through to array repair path.
   }
 
   const repaired = extractFirstJsonArray(trimmed);
@@ -241,16 +367,64 @@ function parseConceptsFromModelContent(raw: string) {
 }
 
 /**
- * Calls Gemini using the documented `generateContent` REST endpoint.
+ * Calls K2 through a chat-completions style endpoint.
+ * @param cleanedText - Source text after ingestion and normalization.
+ * @param input - Original validated extraction input used for prompt context.
+ * @returns The raw generated text from K2.
+ * @remarks Keeps the provider-specific HTTP contract isolated to this file so later endpoint changes stay local.
+ */
+async function generateWithK2(cleanedText: string, input: ExtractionInput) {
+  const env = getServerEnv();
+  if (!env.K2_API_KEY || !env.K2_API_BASE_URL || !env.K2_MODEL) {
+    throw new Error("K2 extraction is not configured.");
+  }
+  const endpoint = new URL(
+    "chat/completions",
+    env.K2_API_BASE_URL.endsWith("/") ? env.K2_API_BASE_URL : `${env.K2_API_BASE_URL}/`,
+  );
+
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${env.K2_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model: env.K2_MODEL,
+      temperature: 0.1,
+      stream: false,
+      messages: [
+        {
+          role: "system",
+          content: K2_CONCEPT_EXTRACTION_PROMPT,
+        },
+        {
+          role: "user",
+          content: buildUserPrompt(cleanedText, input),
+        },
+      ],
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`K2 request failed with status ${response.status}.`);
+  }
+
+  return getK2MessageContent((await response.json()) as K2Response);
+}
+
+/**
+ * Calls Gemini for PDF extraction because it tolerates much larger cleaned source bodies.
  * @param cleanedText - Source text after ingestion and normalization.
  * @param input - Original validated extraction input used for prompt context.
  * @returns The raw generated text from Gemini.
- * @remarks
- * - Uses `x-goog-api-key` authentication and `candidates[].content.parts[].text`, per Google's REST docs.
- * - Requests `application/json` output to reduce repair work, but still validates and repairs the response defensively.
  */
 async function generateWithGemini(cleanedText: string, input: ExtractionInput) {
   const env = getServerEnv();
+  if (!env.GEMINI_API_KEY) {
+    throw new Error("Gemini extraction is not configured.");
+  }
+
   const endpoint = new URL(
     `models/${env.GEMINI_MODEL}:generateContent`,
     env.GEMINI_API_BASE_URL.endsWith("/") ? env.GEMINI_API_BASE_URL : `${env.GEMINI_API_BASE_URL}/`,
@@ -260,11 +434,11 @@ async function generateWithGemini(cleanedText: string, input: ExtractionInput) {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      "x-goog-api-key": env.GEMINI_API_KEY ?? "",
+      "x-goog-api-key": env.GEMINI_API_KEY,
     },
     body: JSON.stringify({
       systemInstruction: {
-        parts: [{ text: CONCEPT_EXTRACTION_PROMPT }],
+        parts: [{ text: K2_CONCEPT_EXTRACTION_PROMPT }],
       },
       contents: [
         {
@@ -280,71 +454,113 @@ async function generateWithGemini(cleanedText: string, input: ExtractionInput) {
   });
 
   if (!response.ok) {
-    throw new Error(`Gemini request failed with status ${response.status}.`);
+    const details = await response.text();
+    throw new Error(
+      `Gemini request failed with status ${response.status}.${details ? ` ${details}` : ""}`,
+    );
   }
 
   return getGeminiMessageContent((await response.json()) as GeminiResponse);
 }
 
 /**
- * Calls a generic OpenAI-compatible chat-completions endpoint.
- * @param cleanedText - Source text after ingestion and normalization.
- * @param input - Original validated extraction input used for prompt context.
- * @returns The raw generated text from the provider.
- * @remarks This path exists so the app can switch back to K2 later without changing the rest of the feature pipeline.
+ * Extracts concepts from PDF text by sending the entire cleaned document to Gemini in one request.
+ * @param cleanedText - Normalized PDF text after ingestion.
+ * @param input - Original PDF extraction input used for prompt context.
+ * @returns Validated concepts parsed from Gemini's full-document response.
  */
-async function generateWithOpenAICompatible(cleanedText: string, input: ExtractionInput) {
+async function generateConceptsFromPdfWithGemini(cleanedText: string, input: ExtractionInput) {
+  const rawContent = await generateWithGemini(cleanedText, input);
+  return parseConceptsFromModelContent(rawContent);
+}
+
+/**
+ * Asks K2 to convert its own non-JSON answer into the strict concept array contract.
+ * @param rawContent - Original K2 text that failed local parsing.
+ * @returns Raw repaired assistant text that should be much closer to the required JSON array.
+ * @remarks This second pass is cheaper than building a custom parser for every reasoning-style failure mode.
+ */
+async function repairWithK2(rawContent: string) {
   const env = getServerEnv();
+  if (!env.K2_API_KEY || !env.K2_API_BASE_URL || !env.K2_MODEL) {
+    throw new Error("K2 extraction is not configured.");
+  }
   const endpoint = new URL(
     "chat/completions",
-    env.OPENAI_COMPATIBLE_API_BASE_URL?.endsWith("/")
-      ? env.OPENAI_COMPATIBLE_API_BASE_URL
-      : `${env.OPENAI_COMPATIBLE_API_BASE_URL ?? ""}/`,
+    env.K2_API_BASE_URL.endsWith("/") ? env.K2_API_BASE_URL : `${env.K2_API_BASE_URL}/`,
   );
 
   const response = await fetch(endpoint, {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      authorization: `Bearer ${env.OPENAI_COMPATIBLE_API_KEY ?? ""}`,
+      authorization: `Bearer ${env.K2_API_KEY}`,
     },
     body: JSON.stringify({
-      model: env.OPENAI_COMPATIBLE_MODEL,
-      temperature: 0.1,
+      model: env.K2_MODEL,
+      temperature: 0,
+      stream: false,
       messages: [
         {
           role: "system",
-          content: CONCEPT_EXTRACTION_PROMPT,
+          content: K2_CONCEPT_REPAIR_PROMPT,
         },
         {
           role: "user",
-          content: buildUserPrompt(cleanedText, input),
+          content: [
+            "Convert the following response into only a JSON array of {name, description} objects.",
+            "If you cannot recover any valid concepts, return [].",
+            "<previous_response>",
+            rawContent,
+            "</previous_response>",
+          ].join("\n"),
         },
       ],
     }),
   });
 
   if (!response.ok) {
-    throw new Error(`OpenAI-compatible request failed with status ${response.status}.`);
+    throw new Error(`K2 request failed with status ${response.status}.`);
   }
 
-  return getOpenAICompatibleMessageContent((await response.json()) as OpenAICompatibleResponse);
+  return getK2MessageContent((await response.json()) as K2Response);
 }
 
 /**
- * Calls the configured model provider and converts the response into validated concepts.
- * @param cleanedText - Source text after ingestion and normalization.
- * @param input - Original validated extraction input used for prompt context.
+ * Calls the source-appropriate model and converts the response into validated concepts.
+ * @param cleanedText - Source text after cleanup.
+ * @param input - Original extraction input used for source context.
  * @returns A validated concept array suitable for returning from a server function.
- * @remarks Gemini is the default active provider, but the adapter seam keeps a later K2 switch to configuration plus provider-specific env vars.
  */
 export async function extractConceptsWithModel(cleanedText: string, input: ExtractionInput) {
-  const env = getServerEnv();
-  const provider = env.AI_PROVIDER as ModelProvider;
-  const rawContent =
-    provider === "gemini"
-      ? await generateWithGemini(cleanedText, input)
-      : await generateWithOpenAICompatible(cleanedText, input);
+  const provider = input.type === "pdf" ? "gemini" : "k2";
+  if (provider === "gemini") {
+    return generateConceptsFromPdfWithGemini(cleanedText, input);
+  }
 
-  return parseConceptsFromModelContent(rawContent);
+  const rawContent = await generateWithK2(cleanedText, input);
+  if (process.env.CONCEPT_EXTRACTION_DEBUG === "1") {
+    console.log("[concept-extraction] model provider:", provider);
+    console.log("[concept-extraction] model raw response:");
+    console.log(rawContent.slice(0, 4000));
+  }
+
+  try {
+    return parseConceptsFromModelContent(rawContent);
+  } catch (error) {
+    const repairable =
+      error instanceof Error &&
+      (error.message.includes("JSON array") || error.message.includes("Unexpected non-whitespace"));
+
+    if (!repairable) {
+      throw error;
+    }
+
+    const repairedContent = await repairWithK2(rawContent);
+    if (process.env.CONCEPT_EXTRACTION_DEBUG === "1") {
+      console.log("[concept-extraction] model repaired response:");
+      console.log(repairedContent.slice(0, 4000));
+    }
+    return parseConceptsFromModelContent(repairedContent);
+  }
 }

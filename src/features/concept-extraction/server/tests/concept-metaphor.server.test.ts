@@ -87,7 +87,7 @@ describe("generateConceptMetaphorsForCurrentUser", () => {
         metaphor: {
           status: "ready",
           objectName: "clockwork atom core",
-          prompt: "A clockwork atom core with orbiting brass rings and a bright nucleus.",
+          prompt: "a clockwork atom core",
           rationale: "The layered rings make atomic structure easier to picture.",
           generatedAt: "2026-03-28T15:00:00.000Z",
         },
@@ -106,7 +106,7 @@ describe("generateConceptMetaphorsForCurrentUser", () => {
         metaphor: {
           status: "ready",
           objectName: "glass neuron lantern",
-          prompt: "A glass neuron lantern with glowing branching filaments, clean silhouette.",
+          prompt: "a glass neuron lantern",
           rationale: "The lantern suggests transmitted signals and branching structure.",
           generatedAt: "2026-03-28T15:00:00.000Z",
         },
@@ -125,7 +125,7 @@ describe("generateConceptMetaphorsForCurrentUser", () => {
 
     expect(result.concepts.map((concept) => concept.id)).toEqual(["concept-2", "concept-1"]);
     expect(updateConceptMetaphorById).toHaveBeenCalledTimes(2);
-    expect(result.concepts[1]?.metaphor?.prompt).toContain("glowing branching filaments");
+    expect(result.concepts[1]?.metaphor?.prompt).toBe("a glass neuron lantern");
   });
 
   it("rejects duplicate concept ids before hitting Gemini", async () => {

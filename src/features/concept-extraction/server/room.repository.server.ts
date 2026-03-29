@@ -180,3 +180,39 @@ export async function incrementRoomConceptCount(roomId: string, by = 1, session?
 
   return toRoomSummary(document);
 }
+
+/**
+ * Increments a room's concept count by user-scoped slug.
+ * @param userId - Local application user id that owns the room.
+ * @param slug - User-scoped room slug.
+ * @param by - Number of concepts added to the room in the current write batch.
+ * @param session - Optional MongoDB session used when room and concept writes share a transaction.
+ * @returns The updated room summary.
+ * @remarks Used as a fallback when transaction state makes a freshly created room temporarily unavailable by `_id`.
+ */
+export async function incrementRoomConceptCountBySlug(
+  userId: string,
+  slug: string,
+  by = 1,
+  session?: ClientSession,
+) {
+  const rooms = await getRoomsCollection();
+  const document = await rooms.findOneAndUpdate(
+    { userId, slug },
+    {
+      $inc: { conceptCount: by },
+      $set: { updatedAt: new Date() },
+    },
+    {
+      returnDocument: "after",
+      includeResultMetadata: false,
+      session,
+    },
+  );
+
+  if (!document) {
+    throw new Error(`Room ${slug} no longer exists for user ${userId}.`);
+  }
+
+  return toRoomSummary(document);
+}
