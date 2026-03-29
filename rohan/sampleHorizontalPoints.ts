@@ -1,7 +1,12 @@
 import { createRequire } from "node:module";
 
-const INPUT_PATH = "rohan/car.glb";
-const OBJECT_SPECS: PlacementSpec[] = [
+const DEFAULT_INPUT_PATH = "rohan/car.glb";
+const INPUT_PATH = process.env.PLACEMENT_ROOM_INPUT_PATH?.trim() || DEFAULT_INPUT_PATH;
+const OUTPUT_DIR_OVERRIDE = process.env.PLACEMENT_OUTPUT_DIR?.trim() || null;
+const OUTPUT_BASENAME_OVERRIDE = process.env.PLACEMENT_OUTPUT_BASENAME?.trim() || null;
+const SPZ_VISUAL_PATH = process.env.PLACEMENT_SPZ_VISUAL_PATH?.trim() || null;
+
+const DEFAULT_OBJECT_SPECS: PlacementSpec[] = [
   {
     id: "duck",
     inputPath: "rohan/Duck.glb",
@@ -9,6 +14,7 @@ const OBJECT_SPECS: PlacementSpec[] = [
     targetCentroidDistance: 0.35,
     centroidDistanceTolerance: 0.2,
     collisionPadding: 0.02,
+    scaleMultiplier: 0.55,
   },
   {
     id: "avocado",
@@ -20,6 +26,7 @@ const OBJECT_SPECS: PlacementSpec[] = [
     scaleMultiplier: 0.85,
   },
 ];
+const OBJECT_SPECS: PlacementSpec[] = DEFAULT_OBJECT_SPECS;
 
 const SAMPLES = 400;
 const NORMAL_THRESHOLD = 0.9;
@@ -31,6 +38,9 @@ const MIN_AUTO_OBJECT_SCALE = 0.05;
 const MAX_AUTO_OBJECT_SCALE = 100;
 const YAW_CANDIDATES = 16;
 const COUNT_OVERRIDE = readOptionalIntegerEnv("PLACEMENT_COUNT_OVERRIDE");
+const MAX_ROOM_FACES = readOptionalIntegerEnv("PLACEMENT_MAX_ROOM_FACES");
+const MIN_SURFACE_AREA = readOptionalNumberEnv("PLACEMENT_MIN_SURFACE_AREA") ?? 0;
+const MIN_SURFACE_MIN_SPAN = readOptionalNumberEnv("PLACEMENT_MIN_SURFACE_MIN_SPAN") ?? 0;
 
 const require = createRequire(import.meta.url);
 
@@ -222,6 +232,18 @@ function readOptionalIntegerEnv(name: string): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+/**
+ * Reads an optional numeric environment variable used for geometric threshold tuning.
+ * @param name - Environment variable name.
+ * @returns Parsed finite number, or null when missing/invalid.
+ */
+function readOptionalNumberEnv(name: string): number | null {
+  const value = process.env[name];
+  if (!value) return null;
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function shuffleInPlace<T>(items: T[], random: () => number): void {
   for (let i = items.length - 1; i > 0; i -= 1) {
     const j = Math.floor(random() * (i + 1));
@@ -229,9 +251,17 @@ function shuffleInPlace<T>(items: T[], random: () => number): void {
   }
 }
 
-function replaceExtension(filePath: string, nextExtension: string): string {
-  const parsed = path.parse(filePath);
-  return path.join(parsed.dir, `${parsed.name}${nextExtension}`);
+/**
+ * Resolves a generated artifact path, optionally redirecting output to a custom directory and basename.
+ * @param inputPath - Source room path used as the default stem when no override is provided.
+ * @param extension - File extension suffix to append, including the leading dot.
+ * @returns Absolute or relative path where the generated artifact should be written.
+ */
+function resolveOutputPath(inputPath: string, extension: string): string {
+  const parsed = path.parse(inputPath);
+  const outputDir = OUTPUT_DIR_OVERRIDE ?? parsed.dir;
+  const outputBasename = OUTPUT_BASENAME_OVERRIDE ?? parsed.name;
+  return path.join(outputDir, `${outputBasename}${extension}`);
 }
 
 function getAccessorVec3(accessor: { getArray(): ArrayLike<number> }, index: number): Vec3 {
@@ -442,26 +472,46 @@ function collectFacesFromNode(node: {
   listChildren(): Array<unknown>;
   getWorldMatrix(): number[] | ArrayLike<number>;
 }): Face[] {
-  const worldMatrix = readWorldMatrix(node);
   const faces: Face[] = [];
-  const mesh = node.getMesh();
-
-  if (mesh) {
-    for (const primitive of mesh.listPrimitives() as Array<{
-      getAttribute(name: string): { getArray(): ArrayLike<number>; getCount(): number } | null;
-      getIndices(): { getArray(): ArrayLike<number> } | null;
-      getMode(): number;
-    }>) {
-      faces.push(...collectFacesFromPrimitive(primitive, worldMatrix));
-    }
-  }
-
-  for (const child of node.listChildren() as Array<{
+  const visited = new Set<unknown>();
+  const stack: Array<{
     getMesh(): { listPrimitives(): Array<unknown> } | null;
     listChildren(): Array<unknown>;
     getWorldMatrix(): number[] | ArrayLike<number>;
-  }>) {
-    faces.push(...collectFacesFromNode(child));
+  }> = [node];
+
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (!current || visited.has(current)) {
+      continue;
+    }
+    visited.add(current);
+
+    const worldMatrix = readWorldMatrix(current);
+    const mesh = current.getMesh();
+
+    if (mesh) {
+      for (const primitive of mesh.listPrimitives() as Array<{
+        getAttribute(name: string): { getArray(): ArrayLike<number>; getCount(): number } | null;
+        getIndices(): { getArray(): ArrayLike<number> } | null;
+        getMode(): number;
+      }>) {
+        const primitiveFaces = collectFacesFromPrimitive(primitive, worldMatrix);
+        for (const face of primitiveFaces) {
+          faces.push(face);
+        }
+      }
+    }
+
+    for (const child of current.listChildren() as Array<{
+      getMesh(): { listPrimitives(): Array<unknown> } | null;
+      listChildren(): Array<unknown>;
+      getWorldMatrix(): number[] | ArrayLike<number>;
+    }>) {
+      if (!visited.has(child)) {
+        stack.push(child);
+      }
+    }
   }
 
   return faces;
@@ -479,30 +529,32 @@ function collectSceneFaces(root: {
   if (scenes.length > 0) {
     for (const scene of scenes) {
       for (const node of scene.listChildren()) {
-        faces.push(
-          ...collectFacesFromNode(
-            node as {
-              getMesh(): { listPrimitives(): Array<unknown> } | null;
-              listChildren(): Array<unknown>;
-              getWorldMatrix(): number[] | ArrayLike<number>;
-            },
-          ),
+        const nodeFaces = collectFacesFromNode(
+          node as {
+            getMesh(): { listPrimitives(): Array<unknown> } | null;
+            listChildren(): Array<unknown>;
+            getWorldMatrix(): number[] | ArrayLike<number>;
+          },
         );
+        for (const face of nodeFaces) {
+          faces.push(face);
+        }
       }
     }
     return faces;
   }
 
   for (const node of root.listNodes()) {
-    faces.push(
-      ...collectFacesFromNode(
-        node as {
-          getMesh(): { listPrimitives(): Array<unknown> } | null;
-          listChildren(): Array<unknown>;
-          getWorldMatrix(): number[] | ArrayLike<number>;
-        },
-      ),
+    const nodeFaces = collectFacesFromNode(
+      node as {
+        getMesh(): { listPrimitives(): Array<unknown> } | null;
+        listChildren(): Array<unknown>;
+        getWorldMatrix(): number[] | ArrayLike<number>;
+      },
     );
+    for (const face of nodeFaces) {
+      faces.push(face);
+    }
   }
 
   return faces;
@@ -726,6 +778,18 @@ function surfacePlanarSize(surface: SurfaceCluster): Vec2 {
   ];
 }
 
+/**
+ * Determines whether a horizontal surface cluster is large enough for object placement attempts.
+ * @param surface - Candidate horizontal surface cluster.
+ * @returns True when the surface meets configured area/span thresholds.
+ */
+function isSurfaceEligible(surface: SurfaceCluster): boolean {
+  const area = totalArea(surface.faces);
+  const planarSize = surfacePlanarSize(surface);
+  const minSpan = Math.min(planarSize[0], planarSize[1]);
+  return area >= MIN_SURFACE_AREA && minSpan >= MIN_SURFACE_MIN_SPAN;
+}
+
 function rotateVec2(point: Vec2, yaw: number): Vec2 {
   const c = Math.cos(yaw);
   const s = Math.sin(yaw);
@@ -943,6 +1007,21 @@ async function loadGeometry(inputPath: string): Promise<Face[]> {
     throw new Error(`No triangle faces found in ${inputPath}`);
   }
 
+  if (MAX_ROOM_FACES && faces.length > MAX_ROOM_FACES) {
+    const stride = Math.ceil(faces.length / MAX_ROOM_FACES);
+    const downsampledFaces: Face[] = [];
+    for (let index = 0; index < faces.length; index += stride) {
+      downsampledFaces.push(faces[index]);
+      if (downsampledFaces.length >= MAX_ROOM_FACES) {
+        break;
+      }
+    }
+    console.log(
+      `Downsampled room faces from ${faces.length} to ${downsampledFaces.length} using stride ${stride}.`,
+    );
+    return downsampledFaces;
+  }
+
   return faces;
 }
 
@@ -1101,9 +1180,16 @@ async function buildPlan(
   }
 
   const clustered = clusterHorizontalFaces(horizontalFaces);
-  const surfaces = clustered.clusters.map((cluster, index) =>
+  const allSurfaces = clustered.clusters.map((cluster, index) =>
     buildSurfaceCluster(cluster, clustered.axis, roomAxis.tangentAxes, random, index),
   );
+  const surfaces = allSurfaces.filter(isSurfaceEligible);
+
+  if (surfaces.length === 0) {
+    throw new Error(
+      `No horizontal surfaces passed placement thresholds (minArea=${MIN_SURFACE_AREA}, minSpan=${MIN_SURFACE_MIN_SPAN}).`,
+    );
+  }
 
   const placements: Placement[] = [];
   const failures: Array<{ id: string; inputPath: string; evaluation: CandidateEvaluation }> = [];
@@ -1251,6 +1337,7 @@ function yawQuaternion(axisInfo: AxisInfo, yaw: number): [number, number, number
 
 async function writePlacedScene(
   roomInputPath: string,
+  outputPath: string,
   plan: PlanResult,
   objectAssets: Map<string, LoadedAsset>,
 ): Promise<string> {
@@ -1283,7 +1370,6 @@ async function writePlacedScene(
     roomScene.addChild(placementNode);
   }
 
-  const outputPath = replaceExtension(roomInputPath, ".placed.glb");
   const io = new NodeIO().registerExtensions(ALL_EXTENSIONS);
   await io.write(outputPath, roomDocument);
   return outputPath;
@@ -1326,8 +1412,15 @@ async function main(): Promise<void> {
     0,
   );
 
-  const outputPath = replaceExtension(INPUT_PATH, ".placements.json");
-  const placedScenePath = await writePlacedScene(INPUT_PATH, bestPlan, objectAssets);
+  const outputPath = resolveOutputPath(INPUT_PATH, ".placements.json");
+  const placedScenePath = await writePlacedScene(
+    INPUT_PATH,
+    resolveOutputPath(INPUT_PATH, ".placed.glb"),
+    bestPlan,
+    objectAssets,
+  );
+  const sceneBundlePath = resolveOutputPath(INPUT_PATH, ".scene-bundle.json");
+  await fs.mkdir(path.dirname(outputPath), { recursive: true });
   await fs.writeFile(
     outputPath,
     `${JSON.stringify(
@@ -1342,8 +1435,35 @@ async function main(): Promise<void> {
           objectScaleBias: bestPlan.objectScaleBias,
           requestedObjects: totalRequestedCount(effectiveSpecs),
         },
+        placeableSurfaceLayer: {
+          upAxis: bestPlan.roomAxis.axis,
+          tangentAxes: bestPlan.roomAxis.tangentAxes,
+          surfaces: bestPlan.surfaces.map((surface) => ({
+            area: totalArea(surface.faces),
+            centroid: surface.centroid,
+            height: surface.height,
+            index: surface.index,
+            triangles: surface.faces.map((face) => face.vertices),
+            projectedMax: surface.projectedMax,
+            projectedMin: surface.projectedMin,
+          })),
+        },
         placements: bestPlan.placements,
         failures: bestPlan.failures,
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+  await fs.writeFile(
+    sceneBundlePath,
+    `${JSON.stringify(
+      {
+        visualSplatPath: SPZ_VISUAL_PATH,
+        collisionRoomPath: INPUT_PATH,
+        placedScenePath,
+        placementsPath: outputPath,
       },
       null,
       2,
@@ -1354,10 +1474,16 @@ async function main(): Promise<void> {
   console.log(`Room input: ${INPUT_PATH}`);
   console.log(`Output: ${outputPath}`);
   console.log(`Placed scene: ${placedScenePath}`);
+  console.log(`Scene bundle: ${sceneBundlePath}`);
+  if (SPZ_VISUAL_PATH) {
+    console.log(`Visual splat: ${SPZ_VISUAL_PATH}`);
+  }
   console.log(`Room faces: ${roomFaces.length}`);
   console.log(`Horizontal faces: ${horizontalFaceCount}`);
   console.log(`Up axis: ${bestPlan.roomAxis.label}`);
   console.log(`Surface clusters: ${bestPlan.surfaces.length}`);
+  console.log(`Surface min area threshold: ${MIN_SURFACE_AREA}`);
+  console.log(`Surface min span threshold: ${MIN_SURFACE_MIN_SPAN}`);
   console.log(`Requested objects: ${totalRequestedCount(effectiveSpecs)}`);
   console.log(`Placed objects: ${bestPlan.placements.length}`);
   console.log(`Failed objects: ${bestPlan.failures.length}`);

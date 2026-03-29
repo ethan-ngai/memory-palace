@@ -24,6 +24,14 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 
 const DEFAULT_SCENE_BUNDLE_PATH = "/rohan/lavendar_room.web.scene-bundle.json";
+const WALK_SPEED = 2.8;
+const WALK_SPEED_BOOST = 6.2;
+const MAX_FRAME_DELTA_SECONDS = 0.1;
+
+/**
+ * Represents a numeric 3D point tuple.
+ */
+type Vec3Tuple = [number, number, number];
 
 /**
  * Describes the SPZ + GLB asset bundle used by the combined viewer.
@@ -36,15 +44,16 @@ type SceneBundle = {
 };
 
 /**
- * Describes one rectangular footprint used as a placeable-surface visualization primitive.
+ * Tracks one placeable-surface region payload from placements JSON.
  */
 type PlaceableSurface = {
   area: number;
-  centroid: [number, number, number];
+  centroid: Vec3Tuple;
   height: number;
   index: number;
-  projectedMax: [number, number];
-  projectedMin: [number, number];
+  projectedMax?: [number, number];
+  projectedMin?: [number, number];
+  triangles?: [Vec3Tuple, Vec3Tuple, Vec3Tuple][];
 };
 
 /**
@@ -78,6 +87,143 @@ type SceneMeshGroups = {
   collisionMeshes: Mesh[];
   placementGroups: PlacementGroup[];
 };
+
+/**
+ * Encapsulates pressed-state flags for viewer keyboard movement.
+ */
+type ViewerKeyboardState = {
+  backward: boolean;
+  boost: boolean;
+  forward: boolean;
+  left: boolean;
+  right: boolean;
+};
+
+/**
+ * Creates a fresh keyboard state object for movement controls.
+ * @returns Zeroed keyboard state.
+ */
+function createViewerKeyboardState(): ViewerKeyboardState {
+  return {
+    backward: false,
+    boost: false,
+    forward: false,
+    left: false,
+    right: false,
+  };
+}
+
+/**
+ * Resets all movement flags so camera drift stops immediately.
+ * @param state - Mutable keyboard state to clear.
+ */
+function clearViewerKeyboardState(state: ViewerKeyboardState): void {
+  state.backward = false;
+  state.boost = false;
+  state.forward = false;
+  state.left = false;
+  state.right = false;
+}
+
+/**
+ * Determines whether a keyboard event should be ignored because the user is typing into a form element.
+ * @param event - Browser keyboard event.
+ * @returns True when key presses should not drive camera motion.
+ */
+function shouldIgnoreViewerKeyboardEvent(event: KeyboardEvent): boolean {
+  const target = event.target as HTMLElement | null;
+  if (!target) {
+    return false;
+  }
+  const tag = target.tagName.toLowerCase();
+  return (
+    target.isContentEditable ||
+    tag === "input" ||
+    tag === "textarea" ||
+    tag === "select" ||
+    tag === "button"
+  );
+}
+
+/**
+ * Applies one key transition to the keyboard state.
+ * @param state - Mutable keyboard movement state.
+ * @param code - KeyboardEvent `code` field.
+ * @param pressed - Whether the key is currently down.
+ * @returns True when the key maps to movement controls.
+ */
+function updateViewerKeyboardState(
+  state: ViewerKeyboardState,
+  code: string,
+  pressed: boolean,
+): boolean {
+  switch (code) {
+    case "KeyW":
+      state.forward = pressed;
+      return true;
+    case "KeyS":
+      state.backward = pressed;
+      return true;
+    case "KeyA":
+      state.left = pressed;
+      return true;
+    case "KeyD":
+      state.right = pressed;
+      return true;
+    case "ShiftLeft":
+    case "ShiftRight":
+      state.boost = pressed;
+      return true;
+    default:
+      return false;
+  }
+}
+
+/**
+ * Moves the viewer camera/target pair using WASD on the horizontal walk plane.
+ * @param camera - Active scene camera.
+ * @param controls - Orbit controls that own camera targeting.
+ * @param state - Current keyboard movement state.
+ * @param deltaSeconds - Frame time delta in seconds.
+ */
+function applyViewerKeyboardMovement(
+  camera: PerspectiveCamera,
+  controls: OrbitControls,
+  state: ViewerKeyboardState,
+  deltaSeconds: number,
+): void {
+  const movementDirection = new Vector3();
+  const cameraForward = controls.target.clone().sub(camera.position);
+  if (cameraForward.lengthSq() <= 1e-8) {
+    return;
+  }
+  cameraForward.normalize();
+
+  const worldUp = camera.up.clone().normalize();
+  const planarForward = cameraForward.sub(
+    worldUp.clone().multiplyScalar(cameraForward.dot(worldUp)),
+  );
+  if (planarForward.lengthSq() <= 1e-8) {
+    return;
+  }
+  planarForward.normalize();
+  const planarRight = new Vector3().crossVectors(planarForward, worldUp).normalize();
+
+  if (state.forward) movementDirection.add(planarForward);
+  if (state.backward) movementDirection.sub(planarForward);
+  if (state.right) movementDirection.add(planarRight);
+  if (state.left) movementDirection.sub(planarRight);
+
+  if (movementDirection.lengthSq() <= 1e-8) {
+    return;
+  }
+  movementDirection.normalize();
+
+  const speed = state.boost ? WALK_SPEED_BOOST : WALK_SPEED;
+  const step = movementDirection.multiplyScalar(speed * deltaSeconds);
+  camera.position.add(step);
+  controls.target.add(step);
+}
 
 /**
  * Finds top-level placement roots in a generated placed GLB scene.
@@ -381,21 +527,38 @@ function applyGlbBlendVisibility(
 }
 
 /**
- * Converts one placeable-surface rectangle into a triangulated world-space quad.
+ * Converts one placeable-surface payload into world-space triangles for rendering.
  * @param layer - Surface-layer axis metadata.
- * @param surface - Surface rectangle payload from placements JSON.
- * @returns Flat xyz vertex array containing two triangles.
+ * @param surface - Surface payload from placements JSON.
+ * @returns Flat xyz vertex array containing render triangles.
  */
 function placeableSurfaceVertices(
   layer: PlaceableSurfaceLayer,
   surface: PlaceableSurface,
 ): number[] {
+  const lift = 0.015;
+
+  if (surface.triangles && surface.triangles.length > 0) {
+    const vertices: number[] = [];
+    for (const triangle of surface.triangles) {
+      for (const vertex of triangle) {
+        const lifted: Vec3Tuple = [vertex[0], vertex[1], vertex[2]];
+        lifted[layer.upAxis] += lift;
+        vertices.push(lifted[0], lifted[1], lifted[2]);
+      }
+    }
+    return vertices;
+  }
+
+  if (!surface.projectedMin || !surface.projectedMax) {
+    return [];
+  }
+
   const [axisA, axisB] = layer.tangentAxes;
   const minA = surface.projectedMin[0];
   const maxA = surface.projectedMax[0];
   const minB = surface.projectedMin[1];
   const maxB = surface.projectedMax[1];
-  const lift = 0.015;
 
   const toWorld = (a: number, b: number): [number, number, number] => {
     const point: [number, number, number] = [0, 0, 0];
@@ -422,18 +585,20 @@ function createPlaceableSurfaceLayerGroup(layer: PlaceableSurfaceLayer): Group {
   group.name = "placeable-surface-layer";
 
   for (const surface of layer.surfaces) {
+    const vertices = placeableSurfaceVertices(layer, surface);
+    if (vertices.length === 0) {
+      continue;
+    }
+
     const geometry = new BufferGeometry();
-    geometry.setAttribute(
-      "position",
-      new Float32BufferAttribute(placeableSurfaceVertices(layer, surface), 3),
-    );
+    geometry.setAttribute("position", new Float32BufferAttribute(vertices, 3));
     geometry.computeVertexNormals();
 
     const areaIntensity = Math.min(1, Math.max(0.2, surface.area / 12));
     const material = new MeshBasicMaterial({
       color: new Color(0.12, 0.85, 0.52).multiplyScalar(areaIntensity),
       depthWrite: false,
-      opacity: 0.24,
+      opacity: 0.18,
       side: DoubleSide,
       transparent: true,
     });
@@ -518,6 +683,8 @@ export function SpzGlbViewer() {
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.target.set(0, 1.2, 0);
+    const keyboardState = createViewerKeyboardState();
+    let previousFrameTime = performance.now();
 
     const ambientLight = new AmbientLight("#dfe8ff", 1.3);
     scene.add(ambientLight);
@@ -536,6 +703,10 @@ export function SpzGlbViewer() {
     };
 
     const frame = () => {
+      const now = performance.now();
+      const deltaSeconds = Math.min((now - previousFrameTime) / 1000, MAX_FRAME_DELTA_SECONDS);
+      previousFrameTime = now;
+      applyViewerKeyboardMovement(camera, controls, keyboardState, deltaSeconds);
       controls.update();
       const groups = meshGroupsRef.current;
       if (groups) {
@@ -628,11 +799,35 @@ export function SpzGlbViewer() {
     });
 
     resize();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (shouldIgnoreViewerKeyboardEvent(event)) {
+        return;
+      }
+      if (updateViewerKeyboardState(keyboardState, event.code, true)) {
+        event.preventDefault();
+      }
+    };
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (updateViewerKeyboardState(keyboardState, event.code, false)) {
+        event.preventDefault();
+      }
+    };
+    const onWindowBlur = () => {
+      clearViewerKeyboardState(keyboardState);
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", onWindowBlur);
     window.addEventListener("resize", resize);
     renderer.setAnimationLoop(frame);
 
     return () => {
       isDisposed = true;
+      clearViewerKeyboardState(keyboardState);
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", onWindowBlur);
       window.removeEventListener("resize", resize);
       renderer.setAnimationLoop(null);
       controls.dispose();
@@ -712,6 +907,7 @@ export function SpzGlbViewer() {
       </div>
       <div className="viewer-status">
         <strong>{status}</strong>
+        <p className="muted">WASD: move camera, Shift: faster movement.</p>
         {error ? <p className="muted">{error}</p> : null}
       </div>
       <div className="panel viewer-stage">

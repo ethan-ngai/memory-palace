@@ -59,6 +59,9 @@ function RootComponent() {
               <Link className="nav-link" to="/play">
                 Play
               </Link>
+              <Link className="nav-link" to="/viewer">
+                Viewer
+              </Link>
               <Link className="nav-link" to="/profile">
                 Profile
               </Link>
