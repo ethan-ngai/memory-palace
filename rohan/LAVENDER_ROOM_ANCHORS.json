@@ -1,0 +1,258 @@
+{
+  "version": "1.0",
+  "created": "2026-03-29T03:44:14.009Z",
+  "description": "Memory palace anchor candidates. Randomly select a subset at runtime to place memory objects.",
+  "totalCandidates": 25,
+  "anchors": [
+    {
+      "id": 0,
+      "label": "Anchor 1",
+      "surface": "surface",
+      "position": {
+        "x": -1.0839,
+        "y": -1.024,
+        "z": -1.1455
+      }
+    },
+    {
+      "id": 1,
+      "label": "Anchor 2",
+      "surface": "surface",
+      "position": {
+        "x": -0.0767,
+        "y": -1.078,
+        "z": -2.7966
+      }
+    },
+    {
+      "id": 2,
+      "label": "Anchor 3",
+      "surface": "surface",
+      "position": {
+        "x": -1.6426,
+        "y": -0.9444,
+        "z": -2.2251
+      }
+    },
+    {
+      "id": 3,
+      "label": "Anchor 4",
+      "surface": "surface",
+      "position": {
+        "x": -1.6094,
+        "y": -0.9953,
+        "z": -3.4704
+      }
+    },
+    {
+      "id": 4,
+      "label": "Anchor 5",
+      "surface": "surface",
+      "position": {
+        "x": -0.7576,
+        "y": -1.0828,
+        "z": -4.3855
+      }
+    },
+    {
+      "id": 5,
+      "label": "Anchor 6",
+      "surface": "surface",
+      "position": {
+        "x": -1.2802,
+        "y": -1.0312,
+        "z": -3.9078
+      }
+    },
+    {
+      "id": 6,
+      "label": "Anchor 7",
+      "surface": "surface",
+      "position": {
+        "x": 0.0099,
+        "y": -1.0468,
+        "z": -1.8312
+      }
+    },
+    {
+      "id": 7,
+      "label": "Anchor 8",
+      "surface": "surface",
+      "position": {
+        "x": 2.352,
+        "y": -1.4675,
+        "z": -2.2435
+      }
+    },
+    {
+      "id": 8,
+      "label": "Anchor 9",
+      "surface": "surface",
+      "position": {
+        "x": 1.4009,
+        "y": -1.0805,
+        "z": -2.4732
+      }
+    },
+    {
+      "id": 9,
+      "label": "Anchor 10",
+      "surface": "surface",
+      "position": {
+        "x": 0.7657,
+        "y": -1.0844,
+        "z": -4.0375
+      }
+    },
+    {
+      "id": 10,
+      "label": "Anchor 11",
+      "surface": "surface",
+      "position": {
+        "x": 0.6663,
+        "y": -1.3521,
+        "z": -0.7468
+      }
+    },
+    {
+      "id": 11,
+      "label": "Anchor 12",
+      "surface": "surface",
+      "position": {
+        "x": -0.0727,
+        "y": -1.4232,
+        "z": 0.3741
+      }
+    },
+    {
+      "id": 12,
+      "label": "Anchor 13",
+      "surface": "surface",
+      "position": {
+        "x": -1.2952,
+        "y": -1.415,
+        "z": 0.7832
+      }
+    },
+    {
+      "id": 13,
+      "label": "Anchor 14",
+      "surface": "surface",
+      "position": {
+        "x": -0.3982,
+        "y": -1.5809,
+        "z": 1.5701
+      }
+    },
+    {
+      "id": 14,
+      "label": "Anchor 15",
+      "surface": "surface",
+      "position": {
+        "x": -0.9155,
+        "y": -1.371,
+        "z": 0.0271
+      }
+    },
+    {
+      "id": 15,
+      "label": "Anchor 16",
+      "surface": "surface",
+      "position": {
+        "x": -0.0582,
+        "y": -1.3363,
+        "z": -0.6378
+      }
+    },
+    {
+      "id": 16,
+      "label": "Anchor 17",
+      "surface": "surface",
+      "position": {
+        "x": 1.4833,
+        "y": -1.3279,
+        "z": -0.4567
+      }
+    },
+    {
+      "id": 17,
+      "label": "Anchor 18",
+      "surface": "surface",
+      "position": {
+        "x": -1.8658,
+        "y": -1.388,
+        "z": -0.5485
+      }
+    },
+    {
+      "id": 18,
+      "label": "Anchor 19",
+      "surface": "surface",
+      "position": {
+        "x": -2.3837,
+        "y": -1.3422,
+        "z": -1.6772
+      }
+    },
+    {
+      "id": 19,
+      "label": "Anchor 20",
+      "surface": "surface",
+      "position": {
+        "x": -3.4343,
+        "y": -1.3113,
+        "z": -4.0052
+      }
+    },
+    {
+      "id": 20,
+      "label": "Anchor 21",
+      "surface": "surface",
+      "position": {
+        "x": 1.2459,
+        "y": -1.3097,
+        "z": -1.5439
+      }
+    },
+    {
+      "id": 21,
+      "label": "Anchor 22",
+      "surface": "surface",
+      "position": {
+        "x": -0.7705,
+        "y": -1.0074,
+        "z": -2.4666
+      }
+    },
+    {
+      "id": 22,
+      "label": "Anchor 23",
+      "surface": "surface",
+      "position": {
+        "x": 1.05,
+        "y": -0.8474,
+        "z": -3.4195
+      }
+    },
+    {
+      "id": 23,
+      "label": "Anchor 24",
+      "surface": "surface",
+      "position": {
+        "x": -0.0174,
+        "y": -1.125,
+        "z": -4.8295
+      }
+    },
+    {
+      "id": 24,
+      "label": "Anchor 25",
+      "surface": "surface",
+      "position": {
+        "x": 0.2719,
+        "y": -1.2886,
+        "z": -6.026
+      }
+    }
+  ]
+}
